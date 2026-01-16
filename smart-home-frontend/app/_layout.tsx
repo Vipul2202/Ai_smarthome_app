@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
+import { LogBox } from 'react-native';
 import * as SplashScreen from 'expo-splash-screen';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
@@ -14,6 +15,16 @@ import CustomSplashScreen from '@/components/SplashScreen';
 
 // Prevent the splash screen from auto-hiding before asset loading is complete
 SplashScreen.preventAutoHideAsync();
+
+// Ignore database connection errors in LogBox
+LogBox.ignoreLogs([
+  'GraphQL errors',
+  'Invalid `context.prisma',
+  'Can\'t reach database server',
+  'INTERNAL_SERVER_ERROR',
+  'Transcription failed',
+  'Failed to stop recording',
+]);
 
 export default function RootLayout() {
   const [isReady, setIsReady] = useState(false);

@@ -58,6 +58,12 @@ export default function LoginScreen() {
     try {
       const result = await login(email, password);
       if (result.success) {
+        // Clear any previously selected house so user must select again
+        const AsyncStorage = (await import('@react-native-async-storage/async-storage')).default;
+        await AsyncStorage.removeItem('selectedHouseId');
+        await AsyncStorage.removeItem('selectedHouseName');
+        console.log('🏠 Cleared house selection - user must select house');
+        
         // Redirect to main index which will handle the flow
         router.replace('/');
       } else {

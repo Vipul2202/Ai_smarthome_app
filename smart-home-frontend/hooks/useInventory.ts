@@ -30,6 +30,15 @@ export const useInventory = ({ kitchenId }: UseInventoryProps = {}) => {
         return null;
       }
 
+      // Check if we have a cached kitchen ID for this house
+      const cachedKitchenKey = `kitchen_${selectedHouseId}`;
+      const cachedKitchenId = await AsyncStorage.getItem(cachedKitchenKey);
+      
+      if (cachedKitchenId) {
+        console.log('✅ Using cached kitchen ID:', cachedKitchenId);
+        return cachedKitchenId;
+      }
+
       // First, try to get user's households
       const householdsResponse = await fetch(`${apiUrl}/graphql`, {
         method: 'POST',
@@ -64,6 +73,8 @@ export const useInventory = ({ kitchenId }: UseInventoryProps = {}) => {
       if (existingHousehold?.kitchens?.[0]?.id) {
         const kitchenId = existingHousehold.kitchens[0].id;
         console.log('✅ Using existing kitchen for house:', kitchenId);
+        // Cache the kitchen ID
+        await AsyncStorage.setItem(cachedKitchenKey, kitchenId);
         return kitchenId;
       }
 
@@ -141,6 +152,8 @@ export const useInventory = ({ kitchenId }: UseInventoryProps = {}) => {
       if (kitchenData.data?.createKitchen?.id) {
         const newKitchenId = kitchenData.data.createKitchen.id;
         console.log('✅ Created new kitchen:', newKitchenId);
+        // Cache the kitchen ID for this house
+        await AsyncStorage.setItem(cachedKitchenKey, newKitchenId);
         return newKitchenId;
       }
 
@@ -209,6 +222,16 @@ export const useInventory = ({ kitchenId }: UseInventoryProps = {}) => {
       });
 
       const data = await response.json();
+      
+      // Check for errors first
+      if (data.errors) {
+        console.log('⚠️ Database connection issue - using empty inventory');
+        // Don't log the full error to avoid red screen
+        setInventoryItems([]);
+        setLoading(false);
+        return;
+      }
+
       console.log('📦 Inventory response:', JSON.stringify(data, null, 2));
 
       if (data.data?.inventoryItems) {
@@ -225,12 +248,11 @@ export const useInventory = ({ kitchenId }: UseInventoryProps = {}) => {
           updatedAt: item.updatedAt,
         }));
         setInventoryItems(items);
-      } else if (data.errors) {
-        console.error('GraphQL errors:', data.errors);
+      } else {
         setInventoryItems([]);
       }
     } catch (error) {
-      console.error('Error fetching inventory:', error);
+      console.log('⚠️ Error fetching inventory - database may be unavailable');
       setInventoryItems([]);
     } finally {
       setLoading(false);

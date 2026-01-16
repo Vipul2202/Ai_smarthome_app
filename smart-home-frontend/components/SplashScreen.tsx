@@ -74,70 +74,9 @@ const CustomSplashScreen: React.FC<SplashScreenProps> = ({ onFinish }) => {
       }).start();
     }, 500);
 
-    // Check if user has houses and redirect accordingly
-    const checkHousesAndRedirect = async () => {
-      try {
-        const token = await AsyncStorage.getItem('authToken');
-        const apiUrl = process.env.EXPO_PUBLIC_API_URL || 'http://192.168.29.65:4000';
-
-        if (!token) {
-          onFinish();
-          return;
-        }
-
-        // Fetch user's houses
-        const response = await fetch(`${apiUrl}/graphql`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${token}`,
-          },
-          body: JSON.stringify({
-            query: `
-              query GetHouses {
-                houses {
-                  id
-                  name
-                }
-              }
-            `,
-          }),
-        });
-
-        const data = await response.json();
-        console.log('🏠 Splash screen houses check:', JSON.stringify(data, null, 2));
-
-        if (data.data?.houses) {
-          if (data.data.houses.length === 0) {
-            // No houses, redirect to create house
-            console.log('📝 No houses found, redirecting to create house');
-            router.replace('/create-house');
-          } else {
-            // Has houses, check if one is selected
-            const selectedHouseId = await AsyncStorage.getItem('selectedHouseId');
-            if (!selectedHouseId) {
-              // No house selected, redirect to select house
-              console.log('🏠 Houses found but none selected, redirecting to select house');
-              router.replace('/select-house');
-            } else {
-              // House selected, continue to dashboard
-              console.log('✅ House already selected, continuing to dashboard');
-              onFinish();
-            }
-          }
-        } else {
-          // Error or no data, just continue
-          onFinish();
-        }
-      } catch (error) {
-        console.error('Error checking houses:', error);
-        onFinish();
-      }
-    };
-
-    // Auto-hide after 4 seconds minimum and check houses
+    // Auto-hide after 4 seconds and continue to main flow
     const timer = setTimeout(() => {
-      checkHousesAndRedirect();
+      onFinish();
     }, 4000);
 
     return () => clearTimeout(timer);
@@ -230,9 +169,9 @@ const CustomSplashScreen: React.FC<SplashScreenProps> = ({ onFinish }) => {
           </View>
           
           {/* Status Message */}
-          <View style={styles.statusContainer}>
+          {/* <View style={styles.statusContainer}>
             <Text style={styles.statusText}>Your system is now in optimal condition</Text>
-          </View>
+          </View> */}
         </View>
 
         {/* Version */}

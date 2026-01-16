@@ -50,35 +50,6 @@ export default function DashboardScreen() {
     }
   }, [isAuthenticated, isLoading]);
 
-  // Check if house is selected, redirect to select-house if not
-  useEffect(() => {
-    const checkHouseSelection = async () => {
-      if (isAuthenticated && !isLoading) {
-        const houseId = await AsyncStorage.getItem('selectedHouseId');
-        if (!houseId) {
-          console.log('⚠️ No house selected, redirecting to select house');
-          router.replace('/select-house');
-        }
-      }
-    };
-    checkHouseSelection();
-  }, [isAuthenticated, isLoading]);
-
-  // Check if house is selected, redirect to select house if not
-  useEffect(() => {
-    const checkHouseSelection = async () => {
-      if (isAuthenticated && !isLoading) {
-        const selectedHouseId = await AsyncStorage.getItem('selectedHouseId');
-        if (!selectedHouseId) {
-          console.log('No house selected, redirecting to select house');
-          router.replace('/select-house');
-        }
-      }
-    };
-    
-    checkHouseSelection();
-  }, [isAuthenticated, isLoading]);
-
   // Don't render if not authenticated
   if (!isAuthenticated) {
     return null;

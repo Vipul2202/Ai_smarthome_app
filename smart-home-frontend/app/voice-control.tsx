@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -20,8 +20,7 @@ import { router } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useTheme } from '@/providers/ThemeProvider';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import * as Speech from 'expo-speech';
-import { useInventory } from '@/hooks/useInventory';
+import { useVoiceRecording } from '@/hooks/useVoiceRecording';
 
 interface VoiceResult {
   intent: string;
@@ -36,86 +35,277 @@ interface VoiceResult {
   confidence: number;
 }
 
-type MicState = 'idle' | 'listening' | 'processing';
+const CATEGORIES = [
+  { id: 'fruits', label: 'Fruits', icon: 'leaf', color: '#10B981' },
+  { id: 'vegetables', label: 'Vegetables', icon: 'nutrition', color: '#059669' },
+  { id: 'dairy', label: 'Dairy', icon: 'water', color: '#3B82F6' },
+  { id: 'meat', label: 'Meat', icon: 'restaurant', color: '#EF4444' },
+  { id: 'grains', label: 'Grains', icon: 'ellipse', color: '#F59E0B' },
+  { id: 'beverages', label: 'Beverages', icon: 'wine', color: '#8B5CF6' },
+  { id: 'snacks', label: 'Snacks', icon: 'fast-food', color: '#EC4899' },
+  { id: 'other', label: 'Other', icon: 'cube', color: '#6B7280' },
+];
 
 export default function VoiceControlScreen() {
   const { colors, isDark } = useTheme();
-  const { addItem } = useInventory();
-  const [micState, setMicState] = useState<MicState>('idle');
   const [inputText, setInputText] = useState('');
   const [voiceResult, setVoiceResult] = useState<VoiceResult | null>(null);
   const [showConfirmation, setShowConfirmation] = useState(false);
   const [showSuccessModal, setShowSuccessModal] = useState(false);
   const [successItemName, setSuccessItemName] = useState('');
+  const [processingCommand, setProcessingCommand] = useState(false);
+  const [addingToInventory, setAddingToInventory] = useState(false);
   const inputRef = useRef<TextInput>(null);
-  const successScaleAnim = useRef(new Animated.Value(0)).current;
+  const scaleAnim = useRef(new Animated.Value(0)).current;
 
-  // Get mic color based on state
-  const getMicColor = () => {
-    switch (micState) {
-      case 'listening':
-        return ['#10B981', '#059669']; // Green
-      case 'processing':
-        return ['#F59E0B', '#D97706']; // Orange
-      default:
-        return ['#8B5CF6', '#7C3AED']; // Purple
+  // Add item function without using useInventory hook
+  const addItemToInventory = async (itemData: any) => {
+    try {
+      const token = await AsyncStorage.getItem('authToken');
+      const apiUrl = process.env.EXPO_PUBLIC_API_URL || 'http://192.168.29.65:4000';
+
+      // Get or create kitchen
+      const selectedHouseId = await AsyncStorage.getItem('selectedHouseId');
+      const selectedHouseName = await AsyncStorage.getItem('selectedHouseName');
+      
+      if (!selectedHouseId || !selectedHouseName) {
+        throw new Error('No house selected');
+      }
+
+      // Check if we have a cached kitchen ID for this house
+      const cachedKitchenKey = `kitchen_${selectedHouseId}`;
+      const cachedKitchenId = await AsyncStorage.getItem(cachedKitchenKey);
+      
+      let kitchenId = cachedKitchenId;
+
+      if (!kitchenId) {
+        // Get kitchen ID
+        const kitchenResponse = await fetch(`${apiUrl}/graphql`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            query: `
+              query GetHouseholds {
+                households {
+                  id
+                  name
+                  kitchens {
+                    id
+                    name
+                  }
+                }
+              }
+            `,
+          }),
+        });
+
+        const kitchenData = await kitchenResponse.json();
+        const household = kitchenData.data?.households?.find((h: any) => h.name === selectedHouseName);
+        kitchenId = household?.kitchens?.[0]?.id;
+
+        // Create household and kitchen if needed
+        if (!kitchenId) {
+          let householdId = household?.id;
+          
+          if (!householdId) {
+            const createHouseholdResponse = await fetch(`${apiUrl}/graphql`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`,
+              },
+              body: JSON.stringify({
+                query: `
+                  mutation CreateHousehold($input: CreateHouseholdInput!) {
+                    createHousehold(input: $input) {
+                      id
+                    }
+                  }
+                `,
+                variables: {
+                  input: {
+                    name: selectedHouseName,
+                    description: `Household for ${selectedHouseName}`,
+                  },
+                },
+              }),
+            });
+
+            const householdResult = await createHouseholdResponse.json();
+            householdId = householdResult.data?.createHousehold?.id;
+          }
+
+          if (householdId) {
+            const createKitchenResponse = await fetch(`${apiUrl}/graphql`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`,
+              },
+              body: JSON.stringify({
+                query: `
+                  mutation CreateKitchen($input: CreateKitchenInput!) {
+                    createKitchen(input: $input) {
+                      id
+                    }
+                  }
+                `,
+                variables: {
+                  input: {
+                    householdId: householdId,
+                    name: `${selectedHouseName} Kitchen`,
+                    description: `Main kitchen for ${selectedHouseName}`,
+                    type: 'HOME',
+                  },
+                },
+              }),
+            });
+
+            const kitchenResult = await createKitchenResponse.json();
+            kitchenId = kitchenResult.data?.createKitchen?.id;
+            
+            // Cache the kitchen ID
+            if (kitchenId) {
+              await AsyncStorage.setItem(cachedKitchenKey, kitchenId);
+            }
+          }
+        } else {
+          // Cache the found kitchen ID
+          await AsyncStorage.setItem(cachedKitchenKey, kitchenId);
+        }
+      }
+
+      if (!kitchenId) {
+        throw new Error('Failed to get or create kitchen');
+      }
+
+      // Create inventory item
+      const response = await fetch(`${apiUrl}/graphql`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          query: `
+            mutation CreateInventoryItem($input: CreateInventoryItemInput!) {
+              createInventoryItem(input: $input) {
+                id
+                name
+                category
+                defaultUnit
+                totalQuantity
+              }
+            }
+          `,
+          variables: {
+            input: {
+              kitchenId: kitchenId,
+              name: itemData.name,
+              category: (itemData.category || 'OTHER').toUpperCase(),
+              defaultUnit: itemData.unit || 'pieces',
+              location: itemData.location ? itemData.location.toUpperCase() : 'PANTRY',
+              threshold: 2,
+              tags: [],
+            },
+          },
+        }),
+      });
+
+      const data = await response.json();
+
+      if (data.errors) {
+        throw new Error(data.errors[0]?.message || 'Failed to add item');
+      }
+
+      // Add batch for quantity
+      const itemId = data.data?.createInventoryItem?.id;
+      if (itemId && itemData.quantity) {
+        await fetch(`${apiUrl}/graphql`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            query: `
+              mutation CreateInventoryBatch($input: CreateInventoryBatchInput!) {
+                createInventoryBatch(input: $input) {
+                  id
+                  quantity
+                  unit
+                }
+              }
+            `,
+            variables: {
+              input: {
+                itemId: itemId,
+                quantity: itemData.quantity,
+                unit: itemData.unit || 'pieces',
+                purchaseDate: new Date().toISOString(),
+              },
+            },
+          }),
+        });
+      }
+
+      return { success: true, data: data.data?.createInventoryItem };
+    } catch (error: any) {
+      console.error('Error adding item:', error);
+      return { success: false, error: error.message };
     }
   };
 
-  // Get status text
-  const getStatusText = () => {
-    switch (micState) {
-      case 'listening':
-        return '🎤 Listening... Speak now!';
-      case 'processing':
-        return '⚙️ Processing with AI...';
-      default:
-        return 'Ready to capture';
+  const {
+    recordingState,
+    transcript,
+    startRecording,
+    stopRecording,
+    clearTranscript,
+    error: recordingError,
+  } = useVoiceRecording();
+
+  // Update input text when transcript changes
+  useEffect(() => {
+    if (transcript) {
+      setInputText(transcript);
+      // Auto-process the transcript
+      processVoiceCommand(transcript);
+    }
+  }, [transcript]);
+
+  // Show error if recording fails
+  useEffect(() => {
+    if (recordingError) {
+      // Don't show alert for every error, just log it
+      console.log('Recording error:', recordingError);
+    }
+  }, [recordingError]);
+
+  const handleMicPress = async () => {
+    if (recordingState === 'recording') {
+      await stopRecording();
+    } else if (recordingState === 'idle') {
+      clearTranscript();
+      setInputText('');
+      setVoiceResult(null);
+      await startRecording();
     }
   };
 
-  // Start voice capture - focus on text input so user can use voice-to-text
-  const startVoiceCapture = () => {
-    setMicState('listening');
-    Speech.speak('Listening... Please speak your command', {
-      language: 'en',
-      pitch: 1,
-      rate: 1,
-    });
-    
-    // Focus on text input - user can use keyboard's voice-to-text
-    inputRef.current?.focus();
-    
-    // Show instruction
-    Alert.alert(
-      '🎤 Voice Input',
-      'Tap the microphone icon on your keyboard to speak, or type manually.',
-      [{ text: 'OK' }]
-    );
-  };
-
-  // Process the command (from voice or text)
-  const processCommand = async () => {
-    if (!inputText.trim()) {
-      Alert.alert('Empty Input', 'Please speak or type a command first.');
+  const processVoiceCommand = async (text: string) => {
+    if (!text.trim()) {
+      Alert.alert('Error', 'Please speak or type a command');
       return;
     }
 
-    const text = inputText.trim();
-    setMicState('processing');
-
     try {
+      setProcessingCommand(true);
       const token = await AsyncStorage.getItem('authToken');
-
-      if (!token) {
-        Alert.alert('Authentication Required', 'Please login to use voice control.');
-        setMicState('idle');
-        return;
-      }
-
       const apiUrl = process.env.EXPO_PUBLIC_API_URL || 'http://192.168.29.65:4000';
-
-      console.log('🎤 Sending to backend:', text);
 
       const response = await fetch(`${apiUrl}/graphql`, {
         method: 'POST',
@@ -146,588 +336,599 @@ export default function VoiceControlScreen() {
       });
 
       const data = await response.json();
-      console.log('📊 Response:', JSON.stringify(data, null, 2));
+
+      if (data.errors) {
+        throw new Error(data.errors[0]?.message || 'Failed to process command');
+      }
 
       if (data.data?.processVoiceCommand) {
-        const result = data.data.processVoiceCommand;
-        setVoiceResult(result);
+        setVoiceResult(data.data.processVoiceCommand);
         setShowConfirmation(true);
-        setMicState('idle');
-
-        const itemName = result.item.normalized_name || result.item.raw_name || 'item';
-        Speech.speak(`I understood: ${result.intent.replace('_', ' ')} ${itemName}`, {
-          language: 'en',
-          pitch: 1,
-          rate: 1,
-        });
-      } else if (data.errors) {
-        console.error('❌ Errors:', data.errors);
-        Alert.alert('Error', data.errors[0]?.message || 'Failed to process command');
-        setMicState('idle');
       }
     } catch (error: any) {
-      console.error('❌ Error:', error);
-      Alert.alert('Error', error?.message || 'Failed to process. Please try again.');
-      setMicState('idle');
+      console.error('Error processing voice command:', error);
+      Alert.alert('Error', error.message || 'Failed to process voice command');
+    } finally {
+      setProcessingCommand(false);
     }
   };
 
-  // Clear input
-  const clearInput = () => {
-    setInputText('');
-    setVoiceResult(null);
-    setShowConfirmation(false);
-    setMicState('idle');
-  };
-
-  // Confirm and add to inventory
-  const confirmAndAddToInventory = async () => {
+  const handleConfirm = async () => {
     if (!voiceResult) return;
 
-    // Prevent multiple submissions
-    if (micState === 'processing') return;
-
     try {
-      setMicState('processing');
+      setAddingToInventory(true);
       
-      if (voiceResult.intent === 'add_item') {
-        const result = await addItem({
-          name: voiceResult.item.normalized_name || voiceResult.item.raw_name || '',
-          category: voiceResult.item.category || 'other',
-          quantity: voiceResult.item.quantity || 1,
-          unit: voiceResult.item.unit || 'pieces',
-          notes: `Added via voice: "${inputText}"`,
-        });
+      // Use AI-detected category, or default to 'other' if null/empty
+      const categoryToUse = voiceResult.item.category || 'other';
+      
+      const result = await addItemToInventory({
+        name: voiceResult.item.normalized_name || voiceResult.item.raw_name || 'Unknown Item',
+        quantity: voiceResult.item.quantity || 1,
+        unit: voiceResult.item.unit || 'pieces',
+        category: categoryToUse,
+        location: voiceResult.item.location,
+      });
 
-        if (result.success) {
-          Speech.speak('Item added successfully', { language: 'en' });
-          
-          // Show colorful success modal
-          setSuccessItemName(voiceResult.item.normalized_name || voiceResult.item.raw_name || 'Item');
-          setShowSuccessModal(true);
-          
-          // Animate success modal
-          Animated.spring(successScaleAnim, {
-            toValue: 1,
-            useNativeDriver: true,
-            friction: 8,
-          }).start();
-          
-          // Clear input after showing modal
-          clearInput();
-        } else {
-          Alert.alert('Error', 'Failed to add item to inventory');
-          setMicState('idle');
-        }
+      if (result.success) {
+        setSuccessItemName(voiceResult.item.normalized_name || voiceResult.item.raw_name || 'Item');
+        setShowConfirmation(false);
+        setShowSuccessModal(true);
+        
+        // Animate success modal
+        Animated.spring(scaleAnim, {
+          toValue: 1,
+          tension: 50,
+          friction: 7,
+          useNativeDriver: true,
+        }).start();
+
+        // Reset after showing success
+        setTimeout(() => {
+          setVoiceResult(null);
+          setInputText('');
+          clearTranscript();
+        }, 500);
       } else {
-        Alert.alert(
-          'Coming Soon',
-          `The "${voiceResult.intent.replace('_', ' ')}" feature will be available soon!`,
-          [
-            {
-              text: 'OK',
-              onPress: () => {
-                clearInput();
-                setMicState('idle');
-              },
-            },
-          ]
-        );
+        Alert.alert('Error', result.error || 'Failed to add item to inventory');
       }
-    } catch (error) {
-      console.error('Failed to confirm:', error);
-      Alert.alert('Error', 'Failed to complete action');
-      setMicState('idle');
+    } catch (error: any) {
+      console.error('Error adding item:', error);
+      Alert.alert('Error', 'Failed to add item to inventory');
+    } finally {
+      setAddingToInventory(false);
     }
   };
 
-  const handleCloseSuccessModal = () => {
-    Animated.timing(successScaleAnim, {
-      toValue: 0,
-      duration: 200,
-      useNativeDriver: true,
-    }).start(() => {
-      setShowSuccessModal(false);
-      successScaleAnim.setValue(0);
-    });
+  const handleCancel = () => {
+    setShowConfirmation(false);
+    setVoiceResult(null);
   };
 
-  const cancelAction = () => {
-    clearInput();
+  const handleCloseSuccess = () => {
+    setShowSuccessModal(false);
+    scaleAnim.setValue(0);
   };
 
-  const getIntentColor = (intent: string) => {
-    switch (intent) {
-      case 'add_item':
-        return '#10B981';
-      case 'update_item':
-        return '#3B82F6';
-      case 'remove_item':
-        return '#EF4444';
-      case 'query_item':
-        return '#8B5CF6';
+  const handleViewInventory = () => {
+    handleCloseSuccess();
+    router.push('/(tabs)/inventory');
+  };
+
+  const handleAddAnother = () => {
+    handleCloseSuccess();
+    setInputText('');
+    setVoiceResult(null);
+    clearTranscript();
+  };
+
+  const getMicColor = () => {
+    switch (recordingState) {
+      case 'recording':
+        return '#10B981'; // Green
+      case 'processing':
+        return '#F59E0B'; // Orange
       default:
-        return colors.textSecondary;
+        return '#8B5CF6'; // Purple
     }
   };
 
-  const getIntentIcon = (intent: string) => {
-    switch (intent) {
-      case 'add_item':
-        return 'add-circle';
-      case 'update_item':
-        return 'create';
-      case 'remove_item':
-        return 'trash';
-      case 'query_item':
-        return 'search';
-      default:
-        return 'help-circle';
-    }
+  const getMicIcon = () => {
+    if (recordingState === 'recording') return 'stop-circle';
+    if (recordingState === 'processing') return 'hourglass';
+    return 'mic';
   };
+
+  const isProcessing = recordingState === 'processing' || processingCommand;
 
   return (
-    <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
+    <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }}>
       <StatusBar style={isDark ? 'light' : 'dark'} />
-
-      {/* Header */}
-      <View style={styles.header}>
-        <TouchableOpacity
-          style={[styles.backButton, { backgroundColor: colors.surface }]}
-          onPress={() => router.back()}
-        >
-          <Ionicons name="arrow-back" size={24} color={colors.text} />
-        </TouchableOpacity>
-        <Text style={[styles.headerTitle, { color: colors.text }]}>Voice Control</Text>
-        <View style={{ width: 40 }} />
-      </View>
-
+      
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         style={{ flex: 1 }}
       >
-        <ScrollView
-          contentContainerStyle={styles.scrollContent}
-          showsVerticalScrollIndicator={false}
-          keyboardShouldPersistTaps="handled"
-        >
-          {/* Microphone Button */}
-          <View style={styles.micContainer}>
+        <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false}>
+          {/* Header */}
+          <View style={{ paddingHorizontal: 24, paddingTop: 16, paddingBottom: 24 }}>
             <TouchableOpacity
-              style={[
-                styles.micButton,
-                micState === 'listening' && styles.micButtonListening,
-              ]}
-              onPress={startVoiceCapture}
-              disabled={micState === 'processing'}
+              onPress={() => router.back()}
+              style={{
+                width: 40,
+                height: 40,
+                borderRadius: 20,
+                backgroundColor: isDark ? '#374151' : '#F3F4F6',
+                alignItems: 'center',
+                justifyContent: 'center',
+                marginBottom: 24,
+              }}
             >
-              <LinearGradient
-                colors={getMicColor()}
-                style={styles.micGradient}
-              >
-                {micState === 'processing' ? (
-                  <ActivityIndicator size="large" color="white" />
-                ) : (
-                  <Ionicons
-                    name={micState === 'listening' ? 'mic' : 'mic-outline'}
-                    size={64}
-                    color="white"
-                  />
-                )}
-              </LinearGradient>
+              <Ionicons name="arrow-back" size={24} color={colors.text} />
             </TouchableOpacity>
 
-            {/* Status */}
-            <Text style={[styles.micStatus, { color: colors.text }]}>
-              {getStatusText()}
+            <Text style={{
+              fontSize: 32,
+              fontWeight: 'bold',
+              color: colors.text,
+              marginBottom: 8,
+            }}>
+              Voice Control 🎤
+            </Text>
+            <Text style={{
+              fontSize: 16,
+              color: colors.textSecondary,
+              marginBottom: 32,
+            }}>
+              Speak or type to add items to your inventory
             </Text>
 
-            {/* State Indicator */}
-            <View style={styles.stateIndicator}>
-              <View style={[
-                styles.stateDot,
-                {
-                  backgroundColor:
-                    micState === 'listening' ? '#10B981' :
-                    micState === 'processing' ? '#F59E0B' :
-                    '#8B5CF6'
-                }
-              ]} />
-              <Text style={[styles.stateText, { color: colors.textSecondary }]}>
-                {micState === 'listening' ? 'Capturing...' :
-                 micState === 'processing' ? 'Processing...' :
-                 'Ready'}
+            {/* Microphone Button */}
+            <View style={{ alignItems: 'center', marginBottom: 32 }}>
+              <TouchableOpacity
+                onPress={handleMicPress}
+                disabled={isProcessing}
+                style={{
+                  width: 120,
+                  height: 120,
+                  borderRadius: 60,
+                  backgroundColor: getMicColor(),
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  shadowColor: getMicColor(),
+                  shadowOffset: { width: 0, height: 8 },
+                  shadowOpacity: 0.4,
+                  shadowRadius: 16,
+                  elevation: 8,
+                  opacity: isProcessing ? 0.6 : 1,
+                }}
+              >
+                {isProcessing ? (
+                  <ActivityIndicator size="large" color="white" />
+                ) : (
+                  <Ionicons name={getMicIcon()} size={48} color="white" />
+                )}
+              </TouchableOpacity>
+
+              <Text style={{
+                marginTop: 16,
+                fontSize: 16,
+                fontWeight: '600',
+                color: getMicColor(),
+              }}>
+                {recordingState === 'recording' ? 'Listening...' :
+                 recordingState === 'processing' ? 'Processing...' :
+                 processingCommand ? 'Analyzing...' :
+                 'Tap to speak'}
               </Text>
-            </View>
-          </View>
 
-          {/* Text Input Field - Type OR Voice-to-Text */}
-          <View style={[styles.inputCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-            <Text style={[styles.inputLabel, { color: colors.text }]}>
-              💬 Speak or Type Your Command:
-            </Text>
-            
-            <View style={styles.inputContainer}>
-              <TextInput
-                ref={inputRef}
-                style={[styles.textInput, { 
-                  color: colors.text,
-                  backgroundColor: isDark ? '#1F2937' : '#F9FAFB',
-                  borderColor: colors.border,
-                }]}
-                placeholder='e.g., "Add 2 bottles of milk to pantry"'
-                placeholderTextColor={colors.textSecondary}
-                value={inputText}
-                onChangeText={setInputText}
-                multiline
-                numberOfLines={3}
-                textAlignVertical="top"
-              />
-              
-              {inputText.length > 0 && (
-                <TouchableOpacity
-                  style={styles.clearButton}
-                  onPress={clearInput}
-                >
-                  <Ionicons name="close-circle" size={24} color={colors.textSecondary} />
-                </TouchableOpacity>
+              {recordingState === 'recording' && (
+                <Text style={{
+                  marginTop: 8,
+                  fontSize: 14,
+                  color: colors.textSecondary,
+                }}>
+                  Tap again to stop
+                </Text>
+              )}
+
+              {/* Error Display */}
+              {recordingError && recordingState === 'error' && (
+                <View style={{
+                  marginTop: 16,
+                  backgroundColor: '#FEE2E2',
+                  borderRadius: 12,
+                  padding: 16,
+                  maxWidth: 300,
+                }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
+                    <Ionicons name="alert-circle" size={20} color="#DC2626" style={{ marginRight: 8 }} />
+                    <Text style={{ fontSize: 14, fontWeight: '600', color: '#DC2626' }}>
+                      Voice Recording Error
+                    </Text>
+                  </View>
+                  <Text style={{ fontSize: 12, color: '#991B1B', marginBottom: 12 }}>
+                    {recordingError}
+                  </Text>
+                  <TouchableOpacity
+                    onPress={() => {
+                      clearTranscript();
+                      setInputText('');
+                    }}
+                    style={{
+                      backgroundColor: '#DC2626',
+                      borderRadius: 8,
+                      paddingVertical: 8,
+                      paddingHorizontal: 16,
+                      alignItems: 'center',
+                    }}
+                  >
+                    <Text style={{ fontSize: 12, fontWeight: '600', color: 'white' }}>
+                      Try Again
+                    </Text>
+                  </TouchableOpacity>
+                </View>
               )}
             </View>
 
-            <Text style={[styles.inputHint, { color: colors.textSecondary }]}>
-              💡 Tap microphone icon on keyboard to speak, or type manually
-            </Text>
+            {/* Manual Input */}
+            <View style={{ marginBottom: 24 }}>
+              <Text style={{
+                fontSize: 14,
+                fontWeight: '600',
+                color: colors.text,
+                marginBottom: 8,
+              }}>
+                Or type your command:
+              </Text>
+              <View style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                backgroundColor: isDark ? '#1F2937' : '#F3F4F6',
+                borderRadius: 12,
+                paddingHorizontal: 16,
+                borderWidth: 1,
+                borderColor: isDark ? '#374151' : '#E5E7EB',
+              }}>
+                <TextInput
+                  ref={inputRef}
+                  value={inputText}
+                  onChangeText={setInputText}
+                  placeholder='e.g., "Add 2 bottles of milk"'
+                  placeholderTextColor={colors.textSecondary}
+                  style={{
+                    flex: 1,
+                    paddingVertical: 16,
+                    fontSize: 16,
+                    color: colors.text,
+                  }}
+                  editable={!isProcessing}
+                />
+                {inputText.length > 0 && (
+                  <TouchableOpacity
+                    onPress={() => {
+                      setInputText('');
+                      clearTranscript();
+                    }}
+                    style={{ padding: 8 }}
+                  >
+                    <Ionicons name="close-circle" size={20} color={colors.textSecondary} />
+                  </TouchableOpacity>
+                )}
+              </View>
+            </View>
 
             {/* Process Button */}
             <TouchableOpacity
-              style={[styles.processButton]}
-              onPress={processCommand}
-              disabled={micState === 'processing' || !inputText.trim()}
+              onPress={() => processVoiceCommand(inputText)}
+              disabled={!inputText.trim() || isProcessing}
+              style={{
+                opacity: !inputText.trim() || isProcessing ? 0.5 : 1,
+              }}
             >
               <LinearGradient
                 colors={['#8B5CF6', '#7C3AED']}
-                style={styles.processGradient}
-              >
-                <Ionicons name="arrow-forward-circle" size={24} color="white" />
-                <Text style={styles.processButtonText}>
-                  {micState === 'processing' ? 'Processing...' : 'Process Command'}
-                </Text>
-              </LinearGradient>
-            </TouchableOpacity>
-          </View>
-
-          {/* JSON Confirmation */}
-          {showConfirmation && voiceResult && (
-            <View style={[styles.card, { backgroundColor: colors.surface, borderColor: '#8B5CF6' }]}>
-              <View style={styles.resultHeader}>
-                <Ionicons
-                  name={getIntentIcon(voiceResult.intent)}
-                  size={32}
-                  color={getIntentColor(voiceResult.intent)}
-                />
-                <Text style={[styles.cardTitle, { color: colors.text, marginLeft: 12 }]}>
-                  {voiceResult.intent.replace('_', ' ').toUpperCase()}
-                </Text>
-              </View>
-
-              {/* Beautiful Data Display */}
-              <View style={styles.resultDetails}>
-                {voiceResult.item.normalized_name && (
-                  <View style={styles.detailRow}>
-                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                      <Ionicons name="cube" size={18} color="#8B5CF6" />
-                      <Text style={[styles.detailLabel, { color: colors.textSecondary, marginLeft: 8 }]}>
-                        Item Name
-                      </Text>
-                    </View>
-                    <Text style={[styles.detailValue, { color: colors.text }]}>
-                      {voiceResult.item.normalized_name}
-                    </Text>
-                  </View>
-                )}
-
-                {voiceResult.item.quantity && (
-                  <View style={styles.detailRow}>
-                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                      <Ionicons name="calculator" size={18} color="#10B981" />
-                      <Text style={[styles.detailLabel, { color: colors.textSecondary, marginLeft: 8 }]}>
-                        Quantity
-                      </Text>
-                    </View>
-                    <Text style={[styles.detailValue, { color: colors.text }]}>
-                      {voiceResult.item.quantity} {voiceResult.item.unit || ''}
-                    </Text>
-                  </View>
-                )}
-
-                {voiceResult.item.category && (
-                  <View style={styles.detailRow}>
-                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                      <Ionicons name="pricetag" size={18} color="#F59E0B" />
-                      <Text style={[styles.detailLabel, { color: colors.textSecondary, marginLeft: 8 }]}>
-                        Category
-                      </Text>
-                    </View>
-                    <Text style={[styles.detailValue, { color: colors.text, textTransform: 'capitalize' }]}>
-                      {voiceResult.item.category}
-                    </Text>
-                  </View>
-                )}
-
-                {voiceResult.item.location && (
-                  <View style={styles.detailRow}>
-                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                      <Ionicons name="location" size={18} color="#3B82F6" />
-                      <Text style={[styles.detailLabel, { color: colors.textSecondary, marginLeft: 8 }]}>
-                        Location
-                      </Text>
-                    </View>
-                    <Text style={[styles.detailValue, { color: colors.text, textTransform: 'capitalize' }]}>
-                      {voiceResult.item.location}
-                    </Text>
-                  </View>
-                )}
-
-                <View style={styles.detailRow}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                    <Ionicons name="checkmark-circle" size={18} color="#8B5CF6" />
-                    <Text style={[styles.detailLabel, { color: colors.textSecondary, marginLeft: 8 }]}>
-                      Confidence
-                    </Text>
-                  </View>
-                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                    <View style={{
-                      width: 60,
-                      height: 6,
-                      backgroundColor: isDark ? '#374151' : '#E5E7EB',
-                      borderRadius: 3,
-                      overflow: 'hidden',
-                      marginRight: 8,
-                    }}>
-                      <View style={{
-                        width: `${voiceResult.confidence * 100}%`,
-                        height: '100%',
-                        backgroundColor: voiceResult.confidence > 0.7 ? '#10B981' : voiceResult.confidence > 0.5 ? '#F59E0B' : '#EF4444',
-                      }} />
-                    </View>
-                    <Text style={[styles.detailValue, { color: colors.text }]}>
-                      {(voiceResult.confidence * 100).toFixed(0)}%
-                    </Text>
-                  </View>
-                </View>
-              </View>
-
-              <View style={styles.actionButtons}>
-                <TouchableOpacity
-                  style={[styles.actionButton, styles.cancelButton, { borderColor: colors.border }]}
-                  onPress={cancelAction}
-                  disabled={micState === 'processing'}
-                >
-                  <Text style={[styles.cancelButtonText, { color: colors.text }]}>✕ Cancel</Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={[styles.actionButton, styles.confirmButton]}
-                  onPress={confirmAndAddToInventory}
-                  disabled={micState === 'processing'}
-                >
-                  <LinearGradient
-                    colors={micState === 'processing' ? ['#9CA3AF', '#6B7280'] : ['#10B981', '#059669']}
-                    style={styles.confirmGradient}
-                  >
-                    {micState === 'processing' ? (
-                      <>
-                        <ActivityIndicator size="small" color="white" />
-                        <Text style={styles.confirmButtonText}>Adding...</Text>
-                      </>
-                    ) : (
-                      <Text style={styles.confirmButtonText}>✓ Confirm & Add</Text>
-                    )}
-                  </LinearGradient>
-                </TouchableOpacity>
-              </View>
-            </View>
-          )}
-
-          {/* Quick Commands */}
-          <View style={styles.quickCommands}>
-            <Text style={[styles.sectionTitle, { color: colors.text }]}>Quick Commands:</Text>
-            {[
-              'Add 2 bottles of milk to pantry',
-              'Add 6 eggs to fridge',
-              'Add 3 apples to fruit basket',
-              'Add bread to kitchen',
-            ].map((command, index) => (
-              <TouchableOpacity
-                key={index}
-                style={[styles.commandCard, { backgroundColor: colors.surface, borderColor: colors.border }]}
-                onPress={() => {
-                  setInputText(command);
-                  inputRef.current?.focus();
+                style={{
+                  borderRadius: 12,
+                  paddingVertical: 16,
+                  alignItems: 'center',
+                  shadowColor: '#8B5CF6',
+                  shadowOffset: { width: 0, height: 4 },
+                  shadowOpacity: 0.3,
+                  shadowRadius: 8,
+                  elevation: 4,
                 }}
               >
-                <Ionicons name="chatbubble-outline" size={20} color={colors.primary} />
-                <Text style={[styles.commandText, { color: colors.textSecondary }]}>
-                  "{command}"
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </View>
+                {isProcessing ? (
+                  <ActivityIndicator color="white" />
+                ) : (
+                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                    <Ionicons name="send" size={20} color="white" style={{ marginRight: 8 }} />
+                    <Text style={{
+                      fontSize: 18,
+                      fontWeight: '700',
+                      color: 'white',
+                    }}>
+                      Process Command
+                    </Text>
+                  </View>
+                )}
+              </LinearGradient>
+            </TouchableOpacity>
 
-          {/* Color Legend */}
-          <View style={[styles.legendCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-            <Text style={[styles.legendTitle, { color: colors.text }]}>
-              🎨 Microphone States:
-            </Text>
-            <View style={styles.legendItem}>
-              <View style={[styles.legendDot, { backgroundColor: '#8B5CF6' }]} />
-              <Text style={[styles.legendText, { color: colors.textSecondary }]}>
-                Purple = Ready
+            {/* Examples */}
+            <View style={{ marginTop: 32 }}>
+              <Text style={{
+                fontSize: 16,
+                fontWeight: '600',
+                color: colors.text,
+                marginBottom: 16,
+              }}>
+                Try saying:
               </Text>
-            </View>
-            <View style={styles.legendItem}>
-              <View style={[styles.legendDot, { backgroundColor: '#10B981' }]} />
-              <Text style={[styles.legendText, { color: colors.textSecondary }]}>
-                Green = Listening
-              </Text>
-            </View>
-            <View style={styles.legendItem}>
-              <View style={[styles.legendDot, { backgroundColor: '#F59E0B' }]} />
-              <Text style={[styles.legendText, { color: colors.textSecondary }]}>
-                Orange = Processing
-              </Text>
+              {[
+                'Add 2 bottles of milk',
+                'Add 5 tomatoes to the fridge',
+                'Add 1 kg of chicken',
+                'Add bread to pantry',
+              ].map((example, index) => (
+                <TouchableOpacity
+                  key={index}
+                  onPress={() => setInputText(example)}
+                  style={{
+                    backgroundColor: isDark ? '#1F2937' : '#F3F4F6',
+                    borderRadius: 12,
+                    padding: 16,
+                    marginBottom: 12,
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                  }}
+                >
+                  <Ionicons name="bulb-outline" size={20} color="#8B5CF6" style={{ marginRight: 12 }} />
+                  <Text style={{
+                    fontSize: 14,
+                    color: colors.text,
+                    fontStyle: 'italic',
+                  }}>
+                    "{example}"
+                  </Text>
+                </TouchableOpacity>
+              ))}
             </View>
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
 
-      {/* Colorful Success Modal */}
+      {/* Confirmation Modal */}
+      <Modal
+        visible={showConfirmation}
+        transparent
+        animationType="fade"
+        onRequestClose={handleCancel}
+      >
+        <View style={{
+          flex: 1,
+          backgroundColor: 'rgba(0,0,0,0.5)',
+          justifyContent: 'center',
+          alignItems: 'center',
+          padding: 24,
+        }}>
+          <View style={{
+            backgroundColor: colors.surface,
+            borderRadius: 20,
+            padding: 24,
+            width: '100%',
+            maxWidth: 400,
+          }}>
+            <Text style={{
+              fontSize: 24,
+              fontWeight: 'bold',
+              color: colors.text,
+              marginBottom: 16,
+              textAlign: 'center',
+            }}>
+              Confirm Item
+            </Text>
+
+            {voiceResult && (
+              <View style={{ marginBottom: 24 }}>
+                <View style={{
+                  backgroundColor: isDark ? '#1F2937' : '#F3F4F6',
+                  borderRadius: 12,
+                  padding: 16,
+                  marginBottom: 12,
+                }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
+                    <Ionicons name="cube" size={20} color="#8B5CF6" style={{ marginRight: 8 }} />
+                    <Text style={{ fontSize: 16, fontWeight: '600', color: colors.text }}>
+                      {voiceResult.item.normalized_name || voiceResult.item.raw_name}
+                    </Text>
+                  </View>
+                  
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
+                    <Ionicons name="layers" size={20} color="#10B981" style={{ marginRight: 8 }} />
+                    <Text style={{ fontSize: 14, color: colors.textSecondary }}>
+                      Quantity: {voiceResult.item.quantity} {voiceResult.item.unit}
+                    </Text>
+                  </View>
+
+                  {voiceResult.item.category ? (
+                    <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
+                      <Ionicons name="pricetag" size={20} color="#10B981" style={{ marginRight: 8 }} />
+                      <Text style={{ fontSize: 14, color: colors.textSecondary }}>
+                        Category: {voiceResult.item.category}
+                      </Text>
+                    </View>
+                  ) : (
+                    <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
+                      <Ionicons name="pricetag" size={20} color="#F59E0B" style={{ marginRight: 8 }} />
+                      <Text style={{ fontSize: 14, color: colors.textSecondary }}>
+                        Category: <Text style={{ color: '#F59E0B', fontWeight: '600' }}>null</Text>
+                      </Text>
+                    </View>
+                  )}
+
+                  {voiceResult.item.location && (
+                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                      <Ionicons name="location" size={20} color="#3B82F6" style={{ marginRight: 8 }} />
+                      <Text style={{ fontSize: 14, color: colors.textSecondary }}>
+                        Location: {voiceResult.item.location}
+                      </Text>
+                    </View>
+                  )}
+                </View>
+
+                <View style={{
+                  backgroundColor: '#8B5CF6' + '20',
+                  borderRadius: 12,
+                  padding: 12,
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                }}>
+                  <Ionicons name="checkmark-circle" size={20} color="#8B5CF6" style={{ marginRight: 8 }} />
+                  <Text style={{ fontSize: 12, color: colors.text }}>
+                    Confidence: {Math.round(voiceResult.confidence * 100)}%
+                  </Text>
+                </View>
+              </View>
+            )}
+
+            <View style={{ flexDirection: 'row', gap: 12 }}>
+              <TouchableOpacity
+                onPress={handleCancel}
+                disabled={addingToInventory}
+                style={{
+                  flex: 1,
+                  backgroundColor: isDark ? '#374151' : '#E5E7EB',
+                  borderRadius: 12,
+                  paddingVertical: 16,
+                  alignItems: 'center',
+                  opacity: addingToInventory ? 0.5 : 1,
+                }}
+              >
+                <Text style={{ fontSize: 16, fontWeight: '600', color: colors.text }}>
+                  Cancel
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                onPress={handleConfirm}
+                disabled={addingToInventory}
+                style={{ flex: 1, opacity: addingToInventory ? 0.7 : 1 }}
+              >
+                <LinearGradient
+                  colors={['#10B981', '#059669']}
+                  style={{
+                    borderRadius: 12,
+                    paddingVertical: 16,
+                    alignItems: 'center',
+                    flexDirection: 'row',
+                    justifyContent: 'center',
+                  }}
+                >
+                  {addingToInventory ? (
+                    <>
+                      <ActivityIndicator color="white" size="small" style={{ marginRight: 8 }} />
+                      <Text style={{ fontSize: 16, fontWeight: '600', color: 'white' }}>
+                        Adding...
+                      </Text>
+                    </>
+                  ) : (
+                    <Text style={{ fontSize: 16, fontWeight: '600', color: 'white' }}>
+                      Add to Inventory
+                    </Text>
+                  )}
+                </LinearGradient>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Success Modal */}
       <Modal
         visible={showSuccessModal}
         transparent
         animationType="fade"
-        onRequestClose={handleCloseSuccessModal}
+        onRequestClose={handleCloseSuccess}
       >
-        <View
-          style={{
-            flex: 1,
-            backgroundColor: 'rgba(0,0,0,0.7)',
-            justifyContent: 'center',
-            alignItems: 'center',
-            paddingHorizontal: 20,
-          }}
-        >
-          <Animated.View
-            style={{
-              transform: [{ scale: successScaleAnim }],
-              width: '100%',
-              maxWidth: 350,
-            }}
-          >
+        <View style={{
+          flex: 1,
+          backgroundColor: 'rgba(0,0,0,0.5)',
+          justifyContent: 'center',
+          alignItems: 'center',
+          padding: 24,
+        }}>
+          <Animated.View style={{
+            transform: [{ scale: scaleAnim }],
+            width: '100%',
+            maxWidth: 400,
+          }}>
             <LinearGradient
-              colors={['#10B981', '#059669', '#047857']}
+              colors={['#10B981', '#059669']}
               style={{
-                borderRadius: 28,
+                borderRadius: 20,
                 padding: 32,
                 alignItems: 'center',
-                shadowColor: '#10B981',
-                shadowOffset: { width: 0, height: 10 },
-                shadowOpacity: 0.5,
-                shadowRadius: 20,
-                elevation: 15,
               }}
             >
-              {/* Success Icon with Animation */}
-              <View
-                style={{
-                  width: 100,
-                  height: 100,
-                  borderRadius: 50,
-                  backgroundColor: 'rgba(255,255,255,0.2)',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  marginBottom: 24,
-                }}
-              >
-                <Ionicons name="checkmark-circle" size={70} color="white" />
+              <View style={{
+                width: 80,
+                height: 80,
+                borderRadius: 40,
+                backgroundColor: 'rgba(255,255,255,0.2)',
+                alignItems: 'center',
+                justifyContent: 'center',
+                marginBottom: 24,
+              }}>
+                <Ionicons name="checkmark" size={48} color="white" />
               </View>
 
-              {/* Success Text */}
-              <Text
-                style={{
-                  fontSize: 28,
-                  fontWeight: 'bold',
-                  color: 'white',
-                  textAlign: 'center',
-                  marginBottom: 12,
-                }}
-              >
-                Success! 🎉
+              <Text style={{
+                fontSize: 28,
+                fontWeight: 'bold',
+                color: 'white',
+                marginBottom: 8,
+                textAlign: 'center',
+              }}>
+                Success!
               </Text>
 
-              <Text
-                style={{
-                  fontSize: 18,
-                  fontWeight: '600',
-                  color: 'rgba(255,255,255,0.95)',
-                  textAlign: 'center',
-                  marginBottom: 8,
-                }}
-              >
-                {successItemName}
+              <Text style={{
+                fontSize: 16,
+                color: 'rgba(255,255,255,0.9)',
+                marginBottom: 32,
+                textAlign: 'center',
+              }}>
+                {successItemName} added to your inventory
               </Text>
 
-              <Text
-                style={{
-                  fontSize: 15,
-                  color: 'rgba(255,255,255,0.85)',
-                  textAlign: 'center',
-                  marginBottom: 32,
-                }}
-              >
-                has been added to your inventory!
-              </Text>
-
-              {/* Action Buttons */}
               <View style={{ width: '100%', gap: 12 }}>
                 <TouchableOpacity
-                  onPress={() => {
-                    handleCloseSuccessModal();
-                    router.push('/inventory');
-                  }}
+                  onPress={handleViewInventory}
                   style={{
                     backgroundColor: 'white',
+                    borderRadius: 12,
                     paddingVertical: 16,
-                    borderRadius: 14,
                     alignItems: 'center',
-                    shadowColor: '#000',
-                    shadowOffset: { width: 0, height: 2 },
-                    shadowOpacity: 0.2,
-                    shadowRadius: 4,
-                    elevation: 3,
                   }}
                 >
-                  <Text style={{ color: '#059669', fontWeight: '700', fontSize: 17 }}>
-                    📦 View Inventory
+                  <Text style={{ fontSize: 16, fontWeight: '600', color: '#10B981' }}>
+                    View Inventory
                   </Text>
                 </TouchableOpacity>
 
                 <TouchableOpacity
-                  onPress={() => {
-                    handleCloseSuccessModal();
-                    inputRef.current?.focus();
-                  }}
+                  onPress={handleAddAnother}
                   style={{
                     backgroundColor: 'rgba(255,255,255,0.2)',
+                    borderRadius: 12,
                     paddingVertical: 16,
-                    borderRadius: 14,
                     alignItems: 'center',
-                    borderWidth: 2,
-                    borderColor: 'rgba(255,255,255,0.3)',
                   }}
                 >
-                  <Text style={{ color: 'white', fontWeight: '700', fontSize: 17 }}>
-                    ➕ Add Another Item
+                  <Text style={{ fontSize: 16, fontWeight: '600', color: 'white' }}>
+                    Add Another Item
                   </Text>
                 </TouchableOpacity>
               </View>
@@ -738,251 +939,3 @@ export default function VoiceControlScreen() {
     </SafeAreaView>
   );
 }
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-  },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 24,
-    paddingTop: 20,
-    paddingBottom: 16,
-  },
-  backButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  headerTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-  },
-  scrollContent: {
-    paddingHorizontal: 24,
-    paddingBottom: 40,
-  },
-  micContainer: {
-    alignItems: 'center',
-    marginVertical: 40,
-  },
-  micButton: {
-    width: 160,
-    height: 160,
-    borderRadius: 80,
-    overflow: 'hidden',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.3,
-    shadowRadius: 16,
-    elevation: 12,
-  },
-  micButtonListening: {
-    transform: [{ scale: 1.1 }],
-  },
-  micGradient: {
-    width: '100%',
-    height: '100%',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  micStatus: {
-    marginTop: 24,
-    fontSize: 18,
-    fontWeight: '600',
-  },
-  stateIndicator: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 12,
-    gap: 8,
-  },
-  stateDot: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
-  },
-  stateText: {
-    fontSize: 14,
-  },
-  inputCard: {
-    padding: 20,
-    borderRadius: 16,
-    borderWidth: 2,
-    marginBottom: 16,
-  },
-  inputLabel: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    marginBottom: 12,
-  },
-  inputContainer: {
-    position: 'relative',
-  },
-  textInput: {
-    borderWidth: 1,
-    borderRadius: 12,
-    padding: 16,
-    fontSize: 16,
-    minHeight: 100,
-    maxHeight: 150,
-  },
-  clearButton: {
-    position: 'absolute',
-    top: 12,
-    right: 12,
-  },
-  inputHint: {
-    fontSize: 12,
-    marginTop: 8,
-    fontStyle: 'italic',
-  },
-  processButton: {
-    marginTop: 16,
-    borderRadius: 12,
-    overflow: 'hidden',
-  },
-  processGradient: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 16,
-    gap: 8,
-  },
-  processButtonText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: 'white',
-  },
-  card: {
-    padding: 20,
-    borderRadius: 16,
-    borderWidth: 2,
-    marginBottom: 16,
-  },
-  cardTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-  },
-  resultHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 16,
-  },
-  jsonLabel: {
-    fontSize: 14,
-    marginBottom: 12,
-    fontWeight: '500',
-  },
-  jsonContainer: {
-    padding: 12,
-    borderRadius: 8,
-    marginBottom: 16,
-  },
-  jsonText: {
-    fontFamily: 'monospace',
-    fontSize: 12,
-    lineHeight: 18,
-  },
-  resultDetails: {
-    marginBottom: 20,
-  },
-  detailRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 12,
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    backgroundColor: 'rgba(139, 92, 246, 0.1)',
-    borderRadius: 8,
-  },
-  detailLabel: {
-    fontSize: 14,
-    fontWeight: '500',
-  },
-  detailValue: {
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  actionButtons: {
-    flexDirection: 'row',
-    gap: 12,
-  },
-  actionButton: {
-    flex: 1,
-    borderRadius: 12,
-    overflow: 'hidden',
-  },
-  cancelButton: {
-    borderWidth: 2,
-    paddingVertical: 14,
-    alignItems: 'center',
-  },
-  cancelButtonText: {
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  confirmButton: {
-    overflow: 'hidden',
-  },
-  confirmGradient: {
-    paddingVertical: 14,
-    alignItems: 'center',
-  },
-  confirmButtonText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: 'white',
-  },
-  quickCommands: {
-    marginTop: 24,
-  },
-  sectionTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    marginBottom: 16,
-  },
-  commandCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: 16,
-    borderRadius: 12,
-    borderWidth: 1,
-    marginBottom: 12,
-    gap: 12,
-  },
-  commandText: {
-    flex: 1,
-    fontSize: 14,
-    lineHeight: 20,
-  },
-  legendCard: {
-    padding: 16,
-    borderRadius: 12,
-    borderWidth: 1,
-    marginTop: 24,
-  },
-  legendTitle: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    marginBottom: 12,
-  },
-  legendItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    marginBottom: 8,
-  },
-  legendDot: {
-    width: 16,
-    height: 16,
-    borderRadius: 8,
-  },
-  legendText: {
-    fontSize: 14,
-  },
-});

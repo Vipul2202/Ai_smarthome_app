@@ -263,6 +263,101 @@ async function startServer() {
     }
   });
 
+  // Audio Transcription endpoint (Whisper API)
+  fastify.post('/api/transcribe', async (request, reply) => {
+    try {
+      // Verify authentication
+      const authHeader = request.headers.authorization;
+      if (!authHeader || !authHeader.startsWith('Bearer ')) {
+        return reply.code(401).send({
+          error: 'Unauthorized',
+          message: 'Authentication required',
+          statusCode: 401
+        });
+      }
+
+      const token = authHeader.substring(7);
+      try {
+        fastify.jwt.verify(token);
+      } catch (error) {
+        return reply.code(401).send({
+          error: 'Unauthorized',
+          message: 'Invalid or expired token',
+          statusCode: 401
+        });
+      }
+
+      // Check if audio file was uploaded
+      const data = await request.file();
+      if (!data) {
+        return reply.code(400).send({
+          error: 'Bad Request',
+          message: 'No audio file provided',
+          statusCode: 400
+        });
+      }
+
+      // Validate file type (audio files)
+      const allowedTypes = [
+        'audio/mpeg', 'audio/mp3', 'audio/mp4', 'audio/m4a',
+        'audio/wav', 'audio/webm', 'audio/ogg', 'audio/x-m4a'
+      ];
+      
+      const mimeType = data.mimetype.toLowerCase();
+      const isValidType = allowedTypes.some(type => mimeType.includes(type.split('/')[1]));
+      
+      if (!isValidType) {
+        return reply.code(400).send({
+          error: 'Bad Request',
+          message: 'Invalid file type. Only audio files are allowed.',
+          statusCode: 400
+        });
+      }
+
+      // Convert file to buffer
+      const buffer = await data.toBuffer();
+
+      // Validate file size (max 25MB for Whisper API)
+      if (buffer.length > 25 * 1024 * 1024) {
+        return reply.code(400).send({
+          error: 'Bad Request',
+          message: 'File size too large. Maximum size is 25MB.',
+          statusCode: 400
+        });
+      }
+
+      fastify.log.info('Processing audio transcription...');
+
+      // Import WhisperService dynamically
+      const { WhisperService } = await import('./services/whisper');
+
+      // Transcribe audio
+      const transcript = await WhisperService.transcribeAudioBuffer(
+        buffer,
+        data.filename
+      );
+
+      fastify.log.info('Transcription successful');
+
+      return reply.code(200).send({
+        success: true,
+        transcript: transcript,
+        message: 'Audio transcribed successfully'
+      });
+
+    } catch (error) {
+      fastify.log.error('Transcription error: ' + (error instanceof Error ? error.message : String(error)));
+      
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+      
+      return reply.code(500).send({
+        error: 'Internal Server Error',
+        message: errorMessage,
+        statusCode: 500
+      });
+    }
+  });
+
   try {
     await fastify.listen({ port: PORT, host: HOST });
     console.log(`🚀 Server ready at http://${HOST}:${PORT}/graphql`);
