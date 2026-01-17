@@ -13,6 +13,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useTheme } from '@/providers/ThemeProvider';
 import { router } from 'expo-router';
+import { SmartHomeLoading } from '@/components/ui/SmartHomeLoading';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 interface House {
@@ -119,17 +120,7 @@ export default function SelectHouseScreen() {
   };
 
   if (loading) {
-    return (
-      <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }}>
-        <StatusBar style={isDark ? 'light' : 'dark'} />
-        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-          <ActivityIndicator size="large" color="#3B82F6" />
-          <Text style={{ marginTop: 16, fontSize: 16, color: colors.textSecondary }}>
-            Loading your houses...
-          </Text>
-        </View>
-      </SafeAreaView>
-    );
+    return <SmartHomeLoading text="Loading your houses..." />;
   }
 
   return (

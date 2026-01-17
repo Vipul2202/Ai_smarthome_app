@@ -3,6 +3,7 @@ import { Redirect } from 'expo-router';
 import { useAuth } from '@/providers/AuthProvider';
 import { useHouse } from '@/contexts/HouseContext';
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
+import { SmartHomeLoading } from '@/components/ui/SmartHomeLoading';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 export default function Index() {
@@ -43,7 +44,7 @@ export default function Index() {
 
   // Show loading while checking houses
   if (!hasCheckedHouses || housesLoading || !hasCheckedSelection) {
-    return <LoadingSpinner overlay text="Loading your houses..." />;
+    return <SmartHomeLoading text="Loading your houses..." />;
   }
 
   // Authenticated but no houses - go to create house

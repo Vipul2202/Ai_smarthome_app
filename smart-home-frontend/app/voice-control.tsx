@@ -3,7 +3,6 @@ import {
   View,
   Text,
   TouchableOpacity,
-  StyleSheet,
   ScrollView,
   Alert,
   ActivityIndicator,
@@ -20,19 +19,30 @@ import { router } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useTheme } from '@/providers/ThemeProvider';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useVoiceRecording } from '@/hooks/useVoiceRecording';
+import { useLocalVoiceRecording } from '@/hooks/useLocalVoiceRecording';
+import { Audio } from 'expo-av';
 
 interface VoiceResult {
-  intent: string;
+  intent: 'ADD' | 'UPDATE' | 'SEARCH' | 'DELETE' | 'UNKNOWN';
   item: {
-    raw_name: string | null;
-    normalized_name: string | null;
-    category: string | null;
-    quantity: number | null;
-    unit: string | null;
-    location: string | null;
+    name: string;
+    quantity?: number;
+    unit?: string;
+    category?: string;
+    location?: string;
   };
   confidence: number;
+  missingInfo?: string[];
+}
+
+interface SearchResult {
+  id: string;
+  name: string;
+  category: string;
+  totalQuantity: number;
+  defaultUnit: string;
+  location: string;
+  similarity: number;
 }
 
 const CATEGORIES = [
@@ -50,13 +60,76 @@ export default function VoiceControlScreen() {
   const { colors, isDark } = useTheme();
   const [inputText, setInputText] = useState('');
   const [voiceResult, setVoiceResult] = useState<VoiceResult | null>(null);
+  const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [showConfirmation, setShowConfirmation] = useState(false);
+  const [showSearchResults, setShowSearchResults] = useState(false);
+  const [showUpdateConfirm, setShowUpdateConfirm] = useState(false);
   const [showSuccessModal, setShowSuccessModal] = useState(false);
-  const [successItemName, setSuccessItemName] = useState('');
+  const [successMessage, setSuccessMessage] = useState('');
   const [processingCommand, setProcessingCommand] = useState(false);
   const [addingToInventory, setAddingToInventory] = useState(false);
+  const [selectedUpdateItem, setSelectedUpdateItem] = useState<SearchResult | null>(null);
+  const [updateQuantity, setUpdateQuantity] = useState('');
+  const [playingAudio, setPlayingAudio] = useState(false);
+  const [missingInfoAudio, setMissingInfoAudio] = useState<string | null>(null);
+  const [waitingForMissingInfo, setWaitingForMissingInfo] = useState(false);
+  const [missingInfoType, setMissingInfoType] = useState<string[]>([]);
+  const [currentMissingInfoIndex, setCurrentMissingInfoIndex] = useState(0);
+  const [pendingVoiceResult, setPendingVoiceResult] = useState<VoiceResult | null>(null);
+  const [isGeneratingSpeech, setIsGeneratingSpeech] = useState(false);
   const inputRef = useRef<TextInput>(null);
   const scaleAnim = useRef(new Animated.Value(0)).current;
+
+  // Helper function to extract clean location from response
+  const extractCleanLocation = (response: string): string | null => {
+    const responseStr = response.toLowerCase().trim();
+    
+    // Common location keywords
+    const locationKeywords = ['fridge', 'freezer', 'pantry', 'cabinet', 'cupboard', 'container', 'shelf', 'kitchen', 'storage'];
+    
+    // Find the first location keyword in the response
+    for (const keyword of locationKeywords) {
+      if (responseStr.includes(keyword)) {
+        return keyword;
+      }
+    }
+    
+    // If no keyword found, check if it's a reasonable response (not a question)
+    const words = responseStr.split(' ');
+    if (words.length <= 2 && words[0].length > 2 && !responseStr.includes('what') && !responseStr.includes('where')) {
+      return responseStr;
+    }
+    
+    return null;
+  };
+
+  // Helper function to extract clean category from response
+  const extractCleanCategory = (response: string): string | null => {
+    const responseStr = response.toLowerCase().trim();
+    
+    // Common category keywords
+    const categoryKeywords = [
+      'fruits', 'fruit', 'vegetables', 'vegetable', 'dairy', 'meat', 'grains', 'grain',
+      'beverages', 'beverage', 'drinks', 'drink', 'snacks', 'snack', 'other', 'food',
+      'frozen', 'fresh', 'canned', 'packaged', 'seafood', 'fish', 'poultry', 'bread',
+      'bakery', 'condiments', 'spices', 'herbs'
+    ];
+    
+    // Find the first category keyword in the response
+    for (const keyword of categoryKeywords) {
+      if (responseStr.includes(keyword)) {
+        return keyword;
+      }
+    }
+    
+    // If no keyword found, check if it's a reasonable response (not a question)
+    const words = responseStr.split(' ');
+    if (words.length <= 2 && words[0].length > 2 && !responseStr.includes('what') && !responseStr.includes('which')) {
+      return responseStr;
+    }
+    
+    return null;
+  };
 
   // Add item function without using useInventory hook
   const addItemToInventory = async (itemData: any) => {
@@ -266,16 +339,26 @@ export default function VoiceControlScreen() {
     stopRecording,
     clearTranscript,
     error: recordingError,
-  } = useVoiceRecording();
+  } = useLocalVoiceRecording();
 
   // Update input text when transcript changes
   useEffect(() => {
     if (transcript) {
-      setInputText(transcript);
-      // Auto-process the transcript
-      processVoiceCommand(transcript);
+      if (waitingForMissingInfo) {
+        // Handle missing information response
+        console.log('🔍 Debug - Processing missing info response:', {
+          transcript,
+          currentMissingInfo: missingInfoType[currentMissingInfoIndex],
+          originalProductName: pendingVoiceResult?.item?.name
+        });
+        handleMissingInfoResponse(transcript);
+      } else {
+        setInputText(transcript);
+        // Auto-process the transcript
+        processVoiceCommand(transcript);
+      }
     }
-  }, [transcript]);
+  }, [transcript, waitingForMissingInfo]);
 
   // Show error if recording fails
   useEffect(() => {
@@ -289,9 +372,17 @@ export default function VoiceControlScreen() {
     if (recordingState === 'recording') {
       await stopRecording();
     } else if (recordingState === 'idle') {
+      // Clear previous state
       clearTranscript();
       setInputText('');
       setVoiceResult(null);
+      setWaitingForMissingInfo(false);
+      setMissingInfoType([]);
+      setCurrentMissingInfoIndex(0);
+      setPendingVoiceResult(null);
+      setIsGeneratingSpeech(false);
+      setPlayingAudio(false);
+      
       await startRecording();
     }
   };
@@ -307,6 +398,7 @@ export default function VoiceControlScreen() {
       const token = await AsyncStorage.getItem('authToken');
       const apiUrl = process.env.EXPO_PUBLIC_API_URL || 'http://192.168.29.65:4000';
 
+      // Process voice intent with new AI service
       const response = await fetch(`${apiUrl}/graphql`, {
         method: 'POST',
         headers: {
@@ -315,19 +407,18 @@ export default function VoiceControlScreen() {
         },
         body: JSON.stringify({
           query: `
-            mutation ProcessVoiceCommand($transcript: String!) {
-              processVoiceCommand(transcript: $transcript) {
+            mutation ProcessVoiceIntent($transcript: String!) {
+              processVoiceIntent(transcript: $transcript) {
                 intent
                 item {
-                  raw_name
-                  normalized_name
-                  category
+                  name
                   quantity
                   unit
+                  category
                   location
                 }
                 confidence
-                transcript
+                missingInfo
               }
             }
           `,
@@ -341,9 +432,99 @@ export default function VoiceControlScreen() {
         throw new Error(data.errors[0]?.message || 'Failed to process command');
       }
 
-      if (data.data?.processVoiceCommand) {
-        setVoiceResult(data.data.processVoiceCommand);
-        setShowConfirmation(true);
+      if (data.data?.processVoiceIntent) {
+        const result = data.data.processVoiceIntent;
+        
+        console.log('🔍 Debug - Initial voice processing:', {
+          originalTranscript: text,
+          extractedName: result.item.name,
+          extractedCategory: result.item.category,
+          extractedLocation: result.item.location
+        });
+        
+        const voiceResultData = {
+          intent: result.intent,
+          item: {
+            name: result.item.name || '',
+            quantity: result.item.quantity || 1,
+            unit: result.item.unit || 'pieces', // Default unit
+            category: result.item.category,
+            location: result.item.location,
+          },
+          confidence: result.confidence,
+          missingInfo: result.missingInfo || [],
+        };
+
+        // Validate required fields before showing confirmation
+        const requiredFields = ['quantity', 'category', 'location'];
+        const actualMissingInfo = requiredFields.filter(field => {
+          const value = voiceResultData.item[field as keyof typeof voiceResultData.item];
+          
+          // Check if value is missing or empty
+          if (!value || value === '' || value === null || value === undefined) {
+            return true;
+          }
+          
+          // More lenient validation - only reject obvious AI responses
+          const valueStr = String(value).toLowerCase();
+          const obviousAIPatterns = [
+            'what category would you like',
+            'which location would you prefer', 
+            'how many would you like',
+            'please specify the',
+            'could you tell me the',
+            'i need to know the'
+          ];
+          
+          // Only reject if it's clearly an AI question
+          const hasObviousAIPattern = obviousAIPatterns.some(pattern => valueStr.includes(pattern));
+          if (hasObviousAIPattern) {
+            return true;
+          }
+          
+          return false;
+        });
+
+        // Check for missing information
+        if (actualMissingInfo.length > 0) {
+          // Store the pending result and start missing info flow
+          setPendingVoiceResult(voiceResultData);
+          setMissingInfoType(actualMissingInfo);
+          setCurrentMissingInfoIndex(0);
+          setWaitingForMissingInfo(true);
+          
+          console.log('🔍 Debug - Starting missing info flow:', {
+            originalProductName: voiceResultData.item.name,
+            missingFields: actualMissingInfo
+          });
+          
+          // Generate and play speech for missing information (only once)
+          if (!isGeneratingSpeech && !playingAudio) {
+            await generateMissingInfoSpeech(actualMissingInfo);
+          }
+          
+          // Auto-continue recording without user clicking microphone
+          setTimeout(async () => {
+            if (recordingState !== 'recording') {
+              await startRecording();
+            }
+          }, 2000); // Wait 2 seconds after speech finishes, then auto-start recording
+        } else {
+          // All required fields are complete, show confirmation directly
+          setVoiceResult(voiceResultData);
+          setShowConfirmation(true);
+          
+          // Stop any ongoing recording when showing confirmation
+          if (recordingState === 'recording') {
+            await stopRecording();
+          }
+          
+          // Clear any pending voice states
+          setWaitingForMissingInfo(false);
+          setMissingInfoType([]);
+          setCurrentMissingInfoIndex(0);
+          setPendingVoiceResult(null);
+        }
       }
     } catch (error: any) {
       console.error('Error processing voice command:', error);
@@ -362,16 +543,41 @@ export default function VoiceControlScreen() {
       // Use AI-detected category, or default to 'other' if null/empty
       const categoryToUse = voiceResult.item.category || 'other';
       
+      // Use user's location directly, or default to 'PANTRY'
+      let locationToUse = 'PANTRY'; // default
+      if (voiceResult.item.location) {
+        // Try to map to valid StorageLocation enum, but accept user's input
+        const location = voiceResult.item.location.toUpperCase();
+        const validLocations = ['PANTRY', 'FRIDGE', 'FREEZER', 'CONTAINER', 'CABINET'];
+        if (validLocations.includes(location)) {
+          locationToUse = location;
+        } else {
+          // For custom locations, try to map to closest valid enum
+          if (location.includes('FRIDGE') || location.includes('REFRIGERATOR')) {
+            locationToUse = 'FRIDGE';
+          } else if (location.includes('FREEZER')) {
+            locationToUse = 'FREEZER';
+          } else if (location.includes('CABINET') || location.includes('CUPBOARD')) {
+            locationToUse = 'CABINET';
+          } else if (location.includes('CONTAINER') || location.includes('BOX')) {
+            locationToUse = 'CONTAINER';
+          } else {
+            // For completely custom locations, use CONTAINER as generic
+            locationToUse = 'CONTAINER';
+          }
+        }
+      }
+      
       const result = await addItemToInventory({
-        name: voiceResult.item.normalized_name || voiceResult.item.raw_name || 'Unknown Item',
+        name: voiceResult.item.name || 'Unknown Item',
         quantity: voiceResult.item.quantity || 1,
         unit: voiceResult.item.unit || 'pieces',
         category: categoryToUse,
-        location: voiceResult.item.location,
+        location: locationToUse,
       });
 
       if (result.success) {
-        setSuccessItemName(voiceResult.item.normalized_name || voiceResult.item.raw_name || 'Item');
+        setSuccessMessage(`${voiceResult.item.name} added to your inventory`);
         setShowConfirmation(false);
         setShowSuccessModal(true);
         
@@ -403,6 +609,12 @@ export default function VoiceControlScreen() {
   const handleCancel = () => {
     setShowConfirmation(false);
     setVoiceResult(null);
+    setInputText('');
+    clearTranscript();
+    setWaitingForMissingInfo(false);
+    setMissingInfoType([]);
+    setCurrentMissingInfoIndex(0);
+    setPendingVoiceResult(null);
   };
 
   const handleCloseSuccess = () => {
@@ -420,6 +632,318 @@ export default function VoiceControlScreen() {
     setInputText('');
     setVoiceResult(null);
     clearTranscript();
+  };
+
+  const handleUpdateConfirm = async () => {
+    if (!selectedUpdateItem || !updateQuantity) return;
+
+    try {
+      setAddingToInventory(true);
+      const token = await AsyncStorage.getItem('authToken');
+      const apiUrl = process.env.EXPO_PUBLIC_API_URL || 'http://192.168.29.65:4000';
+      const selectedHouseId = await AsyncStorage.getItem('selectedHouseId');
+      
+      if (!selectedHouseId) {
+        throw new Error('No house selected');
+      }
+
+      // Get cached kitchen ID
+      const cachedKitchenKey = `kitchen_${selectedHouseId}`;
+      const kitchenId = await AsyncStorage.getItem(cachedKitchenKey);
+      
+      if (!kitchenId) {
+        throw new Error('Kitchen not found');
+      }
+
+      const response = await fetch(`${apiUrl}/graphql`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          query: `
+            mutation UpdateInventoryByVoice($kitchenId: ID!, $itemName: String!, $quantity: Float!) {
+              updateInventoryByVoice(kitchenId: $kitchenId, itemName: $itemName, quantity: $quantity) {
+                success
+                message
+                item {
+                  id
+                  name
+                  totalQuantity
+                  defaultUnit
+                }
+              }
+            }
+          `,
+          variables: {
+            kitchenId,
+            itemName: selectedUpdateItem.name,
+            quantity: parseFloat(updateQuantity),
+          },
+        }),
+      });
+
+      const data = await response.json();
+
+      if (data.errors) {
+        throw new Error(data.errors[0]?.message || 'Failed to update item');
+      }
+
+      const result = data.data?.updateInventoryByVoice;
+      if (result?.success) {
+        setSuccessMessage(result.message);
+        setShowUpdateConfirm(false);
+        setShowSuccessModal(true);
+        
+        // Animate success modal
+        Animated.spring(scaleAnim, {
+          toValue: 1,
+          tension: 50,
+          friction: 7,
+          useNativeDriver: true,
+        }).start();
+
+        // Reset state
+        setSelectedUpdateItem(null);
+        setUpdateQuantity('');
+        setVoiceResult(null);
+        setInputText('');
+        clearTranscript();
+      } else {
+        Alert.alert('Error', result?.message || 'Failed to update item');
+      }
+    } catch (error: any) {
+      console.error('Error updating item:', error);
+      Alert.alert('Error', error.message || 'Failed to update item');
+    } finally {
+      setAddingToInventory(false);
+    }
+  };
+
+  // Generate and play text-to-speech for missing information
+  const generateMissingInfoSpeech = async (missingInfo: string[]) => {
+    // Prevent multiple speech generations
+    if (isGeneratingSpeech || playingAudio) {
+      console.log('🔄 Speech already generating or playing, skipping...');
+      return;
+    }
+
+    try {
+      setIsGeneratingSpeech(true);
+      setPlayingAudio(true);
+      const token = await AsyncStorage.getItem('authToken');
+      const apiUrl = process.env.EXPO_PUBLIC_API_URL || 'http://192.168.29.65:4000';
+
+      const response = await fetch(`${apiUrl}/graphql`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          query: `
+            mutation GenerateMissingInfoSpeech($missingInfo: [String!]!) {
+              generateMissingInfoSpeech(missingInfo: $missingInfo) {
+                success
+                speechData
+              }
+            }
+          `,
+          variables: { missingInfo },
+        }),
+      });
+
+      const data = await response.json();
+
+      if (data.errors) {
+        throw new Error(data.errors[0]?.message || 'Failed to generate speech');
+      }
+
+      const result = data.data?.generateMissingInfoSpeech;
+      if (result?.success && result.speechData) {
+        setMissingInfoAudio(result.speechData);
+        // Play the audio
+        await playAudioFromBase64(result.speechData);
+      }
+    } catch (error: any) {
+      console.error('Error generating speech:', error);
+      // Don't show error to user, just continue without audio
+    } finally {
+      setIsGeneratingSpeech(false);
+      setPlayingAudio(false);
+    }
+  };
+
+  // Play audio from base64 data
+  const playAudioFromBase64 = async (base64Data: string) => {
+    try {
+      const { sound } = await Audio.Sound.createAsync(
+        { uri: `data:audio/mp3;base64,${base64Data}` },
+        { shouldPlay: true }
+      );
+      
+      sound.setOnPlaybackStatusUpdate((status) => {
+        if (status.isLoaded && status.didJustFinish) {
+          sound.unloadAsync();
+        }
+      });
+    } catch (error) {
+      console.error('Error playing audio:', error);
+    }
+  };
+
+  // Handle missing information response from user
+  const handleMissingInfoResponse = async (response: string) => {
+    if (!pendingVoiceResult || !missingInfoType.length) return;
+
+    const currentMissingInfo = missingInfoType[currentMissingInfoIndex];
+    const updatedResult = { ...pendingVoiceResult };
+
+    console.log('🔍 Debug - Before update:', {
+      productName: updatedResult.item.name,
+      currentMissingInfo,
+      userResponse: response
+    });
+
+    // Parse the response based on missing info type
+    if (currentMissingInfo === 'location') {
+      // Extract clean location from response
+      const cleanLocation = extractCleanLocation(response);
+      if (cleanLocation) {
+        updatedResult.item.location = cleanLocation;
+      } else {
+        // If we can't extract a clean location, use the response as-is but clean it
+        const cleanResponse = response.trim().toLowerCase();
+        if (cleanResponse.length > 0 && !cleanResponse.includes('what') && !cleanResponse.includes('where')) {
+          updatedResult.item.location = cleanResponse;
+        }
+      }
+    } else if (currentMissingInfo === 'category') {
+      // Extract clean category from response
+      const cleanCategory = extractCleanCategory(response);
+      if (cleanCategory) {
+        updatedResult.item.category = cleanCategory;
+      } else {
+        // If we can't extract a clean category, use the response as-is but clean it
+        const cleanResponse = response.trim().toLowerCase();
+        if (cleanResponse.length > 0 && !cleanResponse.includes('what') && !cleanResponse.includes('which')) {
+          updatedResult.item.category = cleanResponse;
+        }
+      }
+    } else if (currentMissingInfo === 'quantity') {
+      // Extract number from response
+      const numbers = response.match(/\d+/);
+      if (numbers) {
+        updatedResult.item.quantity = parseInt(numbers[0]);
+      } else {
+        updatedResult.item.quantity = 1; // default
+      }
+      // Also try to extract unit if mentioned
+      const unitWords = response.toLowerCase().split(' ');
+      const commonUnits = ['pieces', 'kg', 'grams', 'liters', 'bottles', 'cans', 'boxes', 'packets'];
+      const foundUnit = unitWords.find(word => commonUnits.includes(word));
+      if (foundUnit && !updatedResult.item.unit) {
+        updatedResult.item.unit = foundUnit;
+      }
+    } else if (currentMissingInfo === 'unit') {
+      // Accept whatever user says as unit
+      updatedResult.item.unit = response.trim();
+    }
+
+    // IMPORTANT: Ensure product name is never overwritten
+    if (!updatedResult.item.name && pendingVoiceResult.item.name) {
+      updatedResult.item.name = pendingVoiceResult.item.name;
+    }
+
+    console.log('🔍 Debug - After update:', {
+      productName: updatedResult.item.name,
+      category: updatedResult.item.category,
+      location: updatedResult.item.location,
+      quantity: updatedResult.item.quantity
+    });
+
+    // Move to next missing info or complete the flow
+    if (currentMissingInfoIndex < missingInfoType.length - 1) {
+      // Ask for next missing information
+      setCurrentMissingInfoIndex(currentMissingInfoIndex + 1);
+      setPendingVoiceResult(updatedResult);
+      
+      const nextMissingInfo = missingInfoType[currentMissingInfoIndex + 1];
+      // Only generate speech if not already generating
+      if (!isGeneratingSpeech && !playingAudio) {
+        await generateMissingInfoSpeech([nextMissingInfo]);
+      }
+      
+      // Auto-continue recording after speech finishes
+      setTimeout(async () => {
+        if (recordingState !== 'recording') {
+          await startRecording();
+        }
+      }, 2000); // Wait 2 seconds after speech, then auto-start recording
+    } else {
+      // All missing info collected, validate once more before showing confirmation
+      const requiredFields = ['quantity', 'category', 'location'];
+      const stillMissing = requiredFields.filter(field => {
+        const value = updatedResult.item[field as keyof typeof updatedResult.item];
+        
+        // Check if value is missing or empty
+        if (!value || value === '' || value === null || value === undefined) {
+          return true;
+        }
+        
+        // More lenient validation - only reject obvious AI responses
+        const valueStr = String(value).toLowerCase();
+        const obviousAIPatterns = [
+          'what category would you like',
+          'which location would you prefer',
+          'how many would you like',
+          'please specify the',
+          'could you tell me the',
+          'i need to know the'
+        ];
+        
+        // Only reject if it's clearly an AI question
+        const hasObviousAIPattern = obviousAIPatterns.some(pattern => valueStr.includes(pattern));
+        if (hasObviousAIPattern) {
+          return true;
+        }
+        
+        return false;
+      });
+
+      if (stillMissing.length > 0) {
+        // Still missing some info, continue the flow
+        setMissingInfoType(stillMissing);
+        setCurrentMissingInfoIndex(0);
+        setPendingVoiceResult(updatedResult);
+        
+        if (!isGeneratingSpeech && !playingAudio) {
+          await generateMissingInfoSpeech(stillMissing);
+        }
+        
+        setTimeout(async () => {
+          if (recordingState !== 'recording') {
+            await startRecording();
+          }
+        }, 2000);
+      } else {
+        // All required info collected, show confirmation
+        setWaitingForMissingInfo(false);
+        setMissingInfoType([]);
+        setCurrentMissingInfoIndex(0);
+        setPendingVoiceResult(null);
+        
+        // Stop recording when showing confirmation
+        if (recordingState === 'recording') {
+          await stopRecording();
+        }
+        
+        // Set final result and show confirmation
+        setVoiceResult(updatedResult);
+        setShowConfirmation(true);
+      }
+    }
   };
 
   const getMicColor = () => {
@@ -453,7 +977,13 @@ export default function VoiceControlScreen() {
           {/* Header */}
           <View style={{ paddingHorizontal: 24, paddingTop: 16, paddingBottom: 24 }}>
             <TouchableOpacity
-              onPress={() => router.back()}
+              onPress={() => {
+                if (router.canGoBack()) {
+                  router.back();
+                } else {
+                  router.replace('/(tabs)');
+                }
+              }}
               style={{
                 width: 40,
                 height: 40,
@@ -487,7 +1017,7 @@ export default function VoiceControlScreen() {
             <View style={{ alignItems: 'center', marginBottom: 32 }}>
               <TouchableOpacity
                 onPress={handleMicPress}
-                disabled={isProcessing}
+                disabled={isProcessing || showConfirmation}
                 style={{
                   width: 120,
                   height: 120,
@@ -500,7 +1030,7 @@ export default function VoiceControlScreen() {
                   shadowOpacity: 0.4,
                   shadowRadius: 16,
                   elevation: 8,
-                  opacity: isProcessing ? 0.6 : 1,
+                  opacity: (isProcessing || showConfirmation) ? 0.6 : 1,
                 }}
               >
                 {isProcessing ? (
@@ -516,11 +1046,59 @@ export default function VoiceControlScreen() {
                 fontWeight: '600',
                 color: getMicColor(),
               }}>
-                {recordingState === 'recording' ? 'Listening...' :
+                {showConfirmation ? 'Review your item details' :
+                 recordingState === 'recording' ? 
+                  (waitingForMissingInfo ? 
+                    `Tell me the ${missingInfoType[currentMissingInfoIndex]}` : 
+                    'Listening...') :
                  recordingState === 'processing' ? 'Processing...' :
                  processingCommand ? 'Analyzing...' :
+                 playingAudio ? 'AI is asking...' :
+                 waitingForMissingInfo ? 
+                   `Please tell me the ${missingInfoType[currentMissingInfoIndex]}` :
                  'Tap to speak'}
               </Text>
+
+              {waitingForMissingInfo && missingInfoType.length > 0 && !showConfirmation && (
+                <View style={{
+                  marginTop: 12,
+                  backgroundColor: isDark ? '#1F2937' : '#F3F4F6',
+                  borderRadius: 12,
+                  padding: 12,
+                  maxWidth: 300,
+                }}>
+                  <Text style={{
+                    fontSize: 14,
+                    color: colors.text,
+                    textAlign: 'center',
+                    marginBottom: 8,
+                  }}>
+                    Missing Information ({currentMissingInfoIndex + 1}/{missingInfoType.length})
+                  </Text>
+                  <View style={{ flexDirection: 'row', justifyContent: 'center', gap: 8 }}>
+                    {missingInfoType.map((info, index) => (
+                      <View
+                        key={index}
+                        style={{
+                          backgroundColor: index === currentMissingInfoIndex ? '#8B5CF6' : 
+                                         index < currentMissingInfoIndex ? '#10B981' : '#E5E7EB',
+                          borderRadius: 16,
+                          paddingHorizontal: 12,
+                          paddingVertical: 4,
+                        }}
+                      >
+                        <Text style={{
+                          fontSize: 12,
+                          color: index === currentMissingInfoIndex || index < currentMissingInfoIndex ? 'white' : '#6B7280',
+                          fontWeight: '600',
+                        }}>
+                          {info}
+                        </Text>
+                      </View>
+                    ))}
+                  </View>
+                </View>
+              )}
 
               {recordingState === 'recording' && (
                 <Text style={{
@@ -550,23 +1128,45 @@ export default function VoiceControlScreen() {
                   <Text style={{ fontSize: 12, color: '#991B1B', marginBottom: 12 }}>
                     {recordingError}
                   </Text>
-                  <TouchableOpacity
-                    onPress={() => {
-                      clearTranscript();
-                      setInputText('');
-                    }}
-                    style={{
-                      backgroundColor: '#DC2626',
-                      borderRadius: 8,
-                      paddingVertical: 8,
-                      paddingHorizontal: 16,
-                      alignItems: 'center',
-                    }}
-                  >
-                    <Text style={{ fontSize: 12, fontWeight: '600', color: 'white' }}>
-                      Try Again
-                    </Text>
-                  </TouchableOpacity>
+                  <View style={{ flexDirection: 'row', gap: 8 }}>
+                    <TouchableOpacity
+                      onPress={() => {
+                        clearTranscript();
+                        setInputText('');
+                      }}
+                      style={{
+                        flex: 1,
+                        backgroundColor: '#DC2626',
+                        borderRadius: 8,
+                        paddingVertical: 8,
+                        paddingHorizontal: 12,
+                        alignItems: 'center',
+                      }}
+                    >
+                      <Text style={{ fontSize: 12, fontWeight: '600', color: 'white' }}>
+                        Try Again
+                      </Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      onPress={() => {
+                        clearTranscript();
+                        setInputText('');
+                        inputRef.current?.focus();
+                      }}
+                      style={{
+                        flex: 1,
+                        backgroundColor: '#6B7280',
+                        borderRadius: 8,
+                        paddingVertical: 8,
+                        paddingHorizontal: 12,
+                        alignItems: 'center',
+                      }}
+                    >
+                      <Text style={{ fontSize: 12, fontWeight: '600', color: 'white' }}>
+                        Use Text
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
                 </View>
               )}
             </View>
@@ -732,61 +1332,136 @@ export default function VoiceControlScreen() {
 
             {voiceResult && (
               <View style={{ marginBottom: 24 }}>
+                {/* Item Name with Icon */}
                 <View style={{
-                  backgroundColor: isDark ? '#1F2937' : '#F3F4F6',
-                  borderRadius: 12,
-                  padding: 16,
-                  marginBottom: 12,
-                }}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
-                    <Ionicons name="cube" size={20} color="#8B5CF6" style={{ marginRight: 8 }} />
-                    <Text style={{ fontSize: 16, fontWeight: '600', color: colors.text }}>
-                      {voiceResult.item.normalized_name || voiceResult.item.raw_name}
-                    </Text>
-                  </View>
-                  
-                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
-                    <Ionicons name="layers" size={20} color="#10B981" style={{ marginRight: 8 }} />
-                    <Text style={{ fontSize: 14, color: colors.textSecondary }}>
-                      Quantity: {voiceResult.item.quantity} {voiceResult.item.unit}
-                    </Text>
-                  </View>
-
-                  {voiceResult.item.category ? (
-                    <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
-                      <Ionicons name="pricetag" size={20} color="#10B981" style={{ marginRight: 8 }} />
-                      <Text style={{ fontSize: 14, color: colors.textSecondary }}>
-                        Category: {voiceResult.item.category}
-                      </Text>
-                    </View>
-                  ) : (
-                    <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
-                      <Ionicons name="pricetag" size={20} color="#F59E0B" style={{ marginRight: 8 }} />
-                      <Text style={{ fontSize: 14, color: colors.textSecondary }}>
-                        Category: <Text style={{ color: '#F59E0B', fontWeight: '600' }}>null</Text>
-                      </Text>
-                    </View>
-                  )}
-
-                  {voiceResult.item.location && (
-                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                      <Ionicons name="location" size={20} color="#3B82F6" style={{ marginRight: 8 }} />
-                      <Text style={{ fontSize: 14, color: colors.textSecondary }}>
-                        Location: {voiceResult.item.location}
-                      </Text>
-                    </View>
-                  )}
-                </View>
-
-                <View style={{
-                  backgroundColor: '#8B5CF6' + '20',
-                  borderRadius: 12,
-                  padding: 12,
                   flexDirection: 'row',
                   alignItems: 'center',
+                  justifyContent: 'center',
+                  marginBottom: 20,
+                }}>
+                  <View style={{
+                    width: 60,
+                    height: 60,
+                    borderRadius: 30,
+                    backgroundColor: '#8B5CF6',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    marginRight: 16,
+                  }}>
+                    <Text style={{ fontSize: 24 }}>📦</Text>
+                  </View>
+                  <Text style={{ 
+                    fontSize: 24, 
+                    fontWeight: 'bold', 
+                    color: colors.text,
+                    flex: 1,
+                  }}>
+                    {voiceResult.item.name || 'Unknown Item'}
+                  </Text>
+                </View>
+                
+                {/* Item Details */}
+                <View style={{ gap: 12 }}>
+                  {/* Quantity */}
+                  <View style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    backgroundColor: isDark ? '#1F2937' : '#F3F4F6',
+                    borderRadius: 12,
+                    padding: 16,
+                  }}>
+                    <View style={{
+                      width: 40,
+                      height: 40,
+                      borderRadius: 20,
+                      backgroundColor: '#10B981',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      marginRight: 12,
+                    }}>
+                      <Text style={{ fontSize: 16 }}>📊</Text>
+                    </View>
+                    <View>
+                      <Text style={{ fontSize: 12, color: colors.textSecondary, fontWeight: '600' }}>
+                        Quantity
+                      </Text>
+                      <Text style={{ fontSize: 16, color: colors.text, fontWeight: '600' }}>
+                        {voiceResult.item.quantity} {voiceResult.item.unit || 'pieces'}
+                      </Text>
+                    </View>
+                  </View>
+
+                  {/* Category */}
+                  <View style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    backgroundColor: isDark ? '#1F2937' : '#F3F4F6',
+                    borderRadius: 12,
+                    padding: 16,
+                  }}>
+                    <View style={{
+                      width: 40,
+                      height: 40,
+                      borderRadius: 20,
+                      backgroundColor: '#10B981',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      marginRight: 12,
+                    }}>
+                      <Text style={{ fontSize: 16 }}>🏷️</Text>
+                    </View>
+                    <View>
+                      <Text style={{ fontSize: 12, color: colors.textSecondary, fontWeight: '600' }}>
+                        Category
+                      </Text>
+                      <Text style={{ fontSize: 16, color: colors.text, fontWeight: '600' }}>
+                        {voiceResult.item.category || 'other'}
+                      </Text>
+                    </View>
+                  </View>
+
+                  {/* Location */}
+                  <View style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    backgroundColor: isDark ? '#1F2937' : '#F3F4F6',
+                    borderRadius: 12,
+                    padding: 16,
+                  }}>
+                    <View style={{
+                      width: 40,
+                      height: 40,
+                      borderRadius: 20,
+                      backgroundColor: '#10B981',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      marginRight: 12,
+                    }}>
+                      <Text style={{ fontSize: 16 }}>📍</Text>
+                    </View>
+                    <View>
+                      <Text style={{ fontSize: 12, color: colors.textSecondary, fontWeight: '600' }}>
+                        Location
+                      </Text>
+                      <Text style={{ fontSize: 16, color: colors.text, fontWeight: '600' }}>
+                        {voiceResult.item.location || 'pantry'}
+                      </Text>
+                    </View>
+                  </View>
+                </View>
+
+                {/* Confidence Indicator */}
+                <View style={{
+                  backgroundColor: '#EDE9FE',
+                  borderRadius: 12,
+                  padding: 16,
+                  marginTop: 16,
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  justifyContent: 'center',
                 }}>
                   <Ionicons name="checkmark-circle" size={20} color="#8B5CF6" style={{ marginRight: 8 }} />
-                  <Text style={{ fontSize: 12, color: colors.text }}>
+                  <Text style={{ fontSize: 14, color: '#8B5CF6', fontWeight: '600' }}>
                     Confidence: {Math.round(voiceResult.confidence * 100)}%
                   </Text>
                 </View>
@@ -900,7 +1575,7 @@ export default function VoiceControlScreen() {
                 marginBottom: 32,
                 textAlign: 'center',
               }}>
-                {successItemName} added to your inventory
+                {successMessage}
               </Text>
 
               <View style={{ width: '100%', gap: 12 }}>
@@ -934,6 +1609,208 @@ export default function VoiceControlScreen() {
               </View>
             </LinearGradient>
           </Animated.View>
+        </View>
+      </Modal>
+
+      {/* Search Results Modal */}
+      <Modal
+        visible={showSearchResults}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowSearchResults(false)}
+      >
+        <View style={{
+          flex: 1,
+          backgroundColor: 'rgba(0,0,0,0.5)',
+          justifyContent: 'center',
+          alignItems: 'center',
+          padding: 24,
+        }}>
+          <View style={{
+            backgroundColor: colors.surface,
+            borderRadius: 20,
+            padding: 24,
+            width: '100%',
+            maxWidth: 400,
+            maxHeight: '80%',
+          }}>
+            <Text style={{
+              fontSize: 24,
+              fontWeight: 'bold',
+              color: colors.text,
+              marginBottom: 16,
+              textAlign: 'center',
+            }}>
+              Search Results
+            </Text>
+
+            <ScrollView style={{ maxHeight: 300 }}>
+              {searchResults.length === 0 ? (
+                <Text style={{ textAlign: 'center', color: colors.textSecondary, padding: 20 }}>
+                  No items found
+                </Text>
+              ) : (
+                searchResults.map((item, index) => (
+                  <View key={index} style={{
+                    backgroundColor: isDark ? '#1F2937' : '#F3F4F6',
+                    borderRadius: 12,
+                    padding: 16,
+                    marginBottom: 12,
+                  }}>
+                    <Text style={{ fontSize: 16, fontWeight: '600', color: colors.text }}>
+                      {item.name}
+                    </Text>
+                    <Text style={{ fontSize: 14, color: colors.textSecondary }}>
+                      {item.totalQuantity} {item.defaultUnit} • {item.category} • {item.location}
+                    </Text>
+                    <Text style={{ fontSize: 12, color: '#8B5CF6' }}>
+                      Match: {Math.round(item.similarity * 100)}%
+                    </Text>
+                  </View>
+                ))
+              )}
+            </ScrollView>
+
+            <TouchableOpacity
+              onPress={() => setShowSearchResults(false)}
+              style={{
+                backgroundColor: '#3B82F6',
+                borderRadius: 12,
+                paddingVertical: 16,
+                alignItems: 'center',
+                marginTop: 16,
+              }}
+            >
+              <Text style={{ fontSize: 16, fontWeight: '600', color: 'white' }}>
+                Close
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Update Confirmation Modal */}
+      <Modal
+        visible={showUpdateConfirm}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowUpdateConfirm(false)}
+      >
+        <View style={{
+          flex: 1,
+          backgroundColor: 'rgba(0,0,0,0.5)',
+          justifyContent: 'center',
+          alignItems: 'center',
+          padding: 24,
+        }}>
+          <View style={{
+            backgroundColor: colors.surface,
+            borderRadius: 20,
+            padding: 24,
+            width: '100%',
+            maxWidth: 400,
+          }}>
+            <Text style={{
+              fontSize: 24,
+              fontWeight: 'bold',
+              color: colors.text,
+              marginBottom: 16,
+              textAlign: 'center',
+            }}>
+              Update Quantity
+            </Text>
+
+            {selectedUpdateItem && (
+              <View style={{ marginBottom: 24 }}>
+                <View style={{
+                  backgroundColor: isDark ? '#1F2937' : '#F3F4F6',
+                  borderRadius: 12,
+                  padding: 16,
+                  marginBottom: 16,
+                }}>
+                  <Text style={{ fontSize: 18, fontWeight: '600', color: colors.text }}>
+                    {selectedUpdateItem.name}
+                  </Text>
+                  <Text style={{ fontSize: 14, color: colors.textSecondary }}>
+                    Current: {selectedUpdateItem.totalQuantity} {selectedUpdateItem.defaultUnit}
+                  </Text>
+                </View>
+
+                <Text style={{ fontSize: 14, fontWeight: '600', color: colors.text, marginBottom: 8 }}>
+                  New Quantity:
+                </Text>
+                <TextInput
+                  value={updateQuantity}
+                  onChangeText={setUpdateQuantity}
+                  keyboardType="numeric"
+                  placeholder="Enter new quantity"
+                  placeholderTextColor={colors.textSecondary}
+                  style={{
+                    backgroundColor: isDark ? '#374151' : '#F3F4F6',
+                    borderRadius: 12,
+                    paddingHorizontal: 16,
+                    paddingVertical: 12,
+                    fontSize: 16,
+                    color: colors.text,
+                    borderWidth: 1,
+                    borderColor: colors.border,
+                  }}
+                />
+              </View>
+            )}
+
+            <View style={{ flexDirection: 'row', gap: 12 }}>
+              <TouchableOpacity
+                onPress={() => setShowUpdateConfirm(false)}
+                disabled={addingToInventory}
+                style={{
+                  flex: 1,
+                  backgroundColor: isDark ? '#374151' : '#E5E7EB',
+                  borderRadius: 12,
+                  paddingVertical: 16,
+                  alignItems: 'center',
+                  opacity: addingToInventory ? 0.5 : 1,
+                }}
+              >
+                <Text style={{ fontSize: 16, fontWeight: '600', color: colors.text }}>
+                  Cancel
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                onPress={handleUpdateConfirm}
+                disabled={addingToInventory || !updateQuantity}
+                style={{ 
+                  flex: 1, 
+                  opacity: (addingToInventory || !updateQuantity) ? 0.5 : 1 
+                }}
+              >
+                <LinearGradient
+                  colors={['#F59E0B', '#D97706']}
+                  style={{
+                    borderRadius: 12,
+                    paddingVertical: 16,
+                    alignItems: 'center',
+                    flexDirection: 'row',
+                    justifyContent: 'center',
+                  }}
+                >
+                  {addingToInventory ? (
+                    <>
+                      <ActivityIndicator color="white" size="small" style={{ marginRight: 8 }} />
+                      <Text style={{ fontSize: 16, fontWeight: '600', color: 'white' }}>
+                        Updating...
+                      </Text>
+                    </>
+                  ) : (
+                    <Text style={{ fontSize: 16, fontWeight: '600', color: 'white' }}>
+                      Update
+                    </Text>
+                  )}
+                </LinearGradient>
+              </TouchableOpacity>
+            </View>
+          </View>
         </View>
       </Modal>
     </SafeAreaView>
