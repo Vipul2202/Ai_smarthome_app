@@ -21,8 +21,7 @@
     "test": "jest",
     "test:watch": "jest --watch",
     "clean": "rimraf dist node_modules",
-    "render:build": "npm ci --production=false && node simple-deploy.js",
-    "build:simple": "npx tsc src/standalone-server.ts --outDir dist --target ES2020 --module commonjs --esModuleInterop --skipLibCheck --resolveJsonModule --allowJs && mv dist/standalone-server.js dist/server.js && echo 'Build completed' && ls -la dist/",
+    "render:build": "node build-for-render.js",
     "render:start": "npm start"
   },
   "dependencies": {

@@ -61,7 +61,7 @@ export const ocrResolvers: any = {
       
       try {
         // Validate kitchen access
-        const { requireKitchenAccess } = await import('../context');
+        const { requireKitchenAccess } = await import('../context.js');
         await requireKitchenAccess(context, kitchenId, 'MEMBER');
         
         const createdItems: any[] = [];

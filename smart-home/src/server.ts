@@ -19,7 +19,7 @@ import { createContext, Context } from './graphql/context';
 import { prisma } from './lib/prisma';
 import { OCRService } from './services/ocr';
 
-const PORT = process.env.PORT ? parseInt(process.env.PORT) : 4000;
+const PORT = Number(process.env.PORT) || 4000;
 const HOST = process.env.HOST || '0.0.0.0';
 
 async function startServer() {
