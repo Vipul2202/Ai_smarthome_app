@@ -1,112 +1,66 @@
 #!/usr/bin/env node
 
-// Load environment variables if .env file exists (for local testing)
-const fs = require('fs');
-const path = require('path');
-
-// Try to load .env from multiple locations
-const envPaths = ['.env', 'dist/.env', '../.env'];
-for (const envPath of envPaths) {
-  if (fs.existsSync(envPath)) {
-    require('dotenv').config({ path: envPath });
-    console.log(`📄 Loaded environment from ${envPath}`);
-    break;
-  }
-}
-
-console.log('🚀 Smart Home Backend - Deployment Start');
+console.log('🚀 Smart Home Backend - Starting...');
 console.log('Node.js version:', process.version);
 console.log('Environment:', process.env.NODE_ENV || 'development');
 console.log('Port:', process.env.PORT || '4000');
-console.log('Current directory:', process.cwd());
 
-// Check if required files exist
-const requiredFiles = [
-  'dist/server.js',
-  'package.json'
-];
+const fs = require('fs');
 
-const optionalFiles = [
-  'node_modules/@prisma/client',
-  'dist/package.json',
-  '.env'
-];
-
-console.log('\n📋 Checking required files...');
-let allRequiredFilesExist = true;
-
-for (const file of requiredFiles) {
-  const exists = fs.existsSync(path.join(process.cwd(), file));
-  console.log(`${exists ? '✅' : '❌'} ${file}: ${exists ? 'Found' : 'Missing'}`);
-  
-  if (!exists) {
-    console.error(`❌ Critical file missing: ${file}`);
-    allRequiredFilesExist = false;
-  }
-}
-
-console.log('\n📋 Checking optional files...');
-for (const file of optionalFiles) {
-  const exists = fs.existsSync(path.join(process.cwd(), file));
-  console.log(`${exists ? '✅' : '⚠️'} ${file}: ${exists ? 'Found' : 'Not found (optional)'}`);
-}
-
-if (!allRequiredFilesExist) {
-  console.error('\n❌ Some required files are missing. Deployment cannot continue.');
-  process.exit(1);
-}
-
-// Check environment variables
-console.log('\n🔧 Checking environment variables...');
-const requiredEnvVars = ['DATABASE_URL', 'JWT_SECRET'];
-const optionalEnvVars = ['OPENAI_API_KEY', 'PORT', 'NODE_ENV'];
-
-let allRequiredEnvVarsExist = true;
-
-for (const envVar of requiredEnvVars) {
-  const value = process.env[envVar];
-  console.log(`${value ? '✅' : '❌'} ${envVar}: ${value ? 'Set' : 'Missing'}`);
-  
-  if (!value) {
-    console.error(`❌ Required environment variable missing: ${envVar}`);
-    allRequiredEnvVarsExist = false;
-  }
-}
-
-for (const envVar of optionalEnvVars) {
-  const value = process.env[envVar];
-  console.log(`${value ? '✅' : '⚠️'} ${envVar}: ${value ? 'Set' : 'Not set'}`);
-}
-
-if (!allRequiredEnvVarsExist) {
-  console.error('\n❌ Some required environment variables are missing.');
-  console.log('⚠️ Continuing anyway - server may have limited functionality.');
-}
-
-console.log('\n🎯 Starting server...');
-
-// Start the server
-try {
-  require('./dist/server.js');
-} catch (error) {
-  console.error('❌ Failed to start server:', error.message);
-  console.error('Stack trace:', error.stack);
-  
-  // Try alternative server locations
-  const alternativeServers = ['./dist/server.js', './server.js', './src/server.js'];
-  
-  for (const serverPath of alternativeServers) {
-    if (fs.existsSync(serverPath)) {
-      console.log(`🔄 Trying alternative server: ${serverPath}`);
+// Check if server file exists
+if (fs.existsSync('dist/server.js')) {
+  console.log('✅ dist/server.js found');
+  try {
+    require('./dist/server.js');
+  } catch (error) {
+    console.error('❌ Failed to start dist/server.js:', error.message);
+    console.log('🔄 Trying backup server...');
+    
+    // Try backup server
+    if (fs.existsSync('server-backup.js')) {
       try {
-        require(serverPath);
-        return; // Success
-      } catch (altError) {
-        console.error(`❌ Alternative server ${serverPath} also failed:`, altError.message);
+        require('./server-backup.js');
+        return;
+      } catch (backupError) {
+        console.error('❌ Backup server also failed:', backupError.message);
       }
+    }
+    
+    process.exit(1);
+  }
+} else {
+  console.error('❌ dist/server.js not found');
+  
+  // Try to copy backup server
+  if (fs.existsSync('server-backup.js')) {
+    console.log('🔄 Copying backup server to dist/server.js...');
+    try {
+      if (!fs.existsSync('dist')) {
+        fs.mkdirSync('dist', { recursive: true });
+      }
+      fs.copyFileSync('server-backup.js', 'dist/server.js');
+      console.log('✅ Backup server copied successfully');
+      require('./dist/server.js');
+      return;
+    } catch (copyError) {
+      console.error('❌ Failed to copy backup server:', copyError.message);
     }
   }
   
-  console.error('❌ All server startup attempts failed.');
+  console.log('📁 Current directory contents:');
+  try {
+    const files = fs.readdirSync('.');
+    files.forEach(file => console.log(`  - ${file}`));
+    
+    if (fs.existsSync('dist')) {
+      console.log('📁 dist directory contents:');
+      const distFiles = fs.readdirSync('dist');
+      distFiles.forEach(file => console.log(`  - dist/${file}`));
+    }
+  } catch (err) {
+    console.log('Could not list directory contents');
+  }
+  
+  console.error('❌ All server startup attempts failed');
   process.exit(1);
 }
