@@ -17,7 +17,9 @@ import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useInventory } from '@/hooks/useInventory';
+import { useLocalVoiceRecording } from '@/hooks/useLocalVoiceRecording';
 import { InventoryItem } from '@/types';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const CATEGORIES = [
   { id: 'fruits', label: 'Fruits', icon: 'leaf', color: '#10B981' },
@@ -45,6 +47,30 @@ export default function InventoryScreen() {
   const [editQuantity, setEditQuantity] = useState('');
   const [editCategory, setEditCategory] = useState('');
   const [editUnit, setEditUnit] = useState('');
+  
+  // Voice search states
+  const [showVoiceSearch, setShowVoiceSearch] = useState(false);
+  const [voiceSearchResults, setVoiceSearchResults] = useState<any[]>([]);
+  const [isVoiceSearching, setIsVoiceSearching] = useState(false);
+  const [showUpdateModal, setShowUpdateModal] = useState(false);
+  const [selectedItemForUpdate, setSelectedItemForUpdate] = useState<any>(null);
+  const [updateQuantity, setUpdateQuantity] = useState('');
+  const [isUpdating, setIsUpdating] = useState(false);
+  
+  // Missing information flow states
+  const [waitingForMissingInfo, setWaitingForMissingInfo] = useState(false);
+  const [missingInfoType, setMissingInfoType] = useState<string[]>([]);
+  const [pendingVoiceResult, setPendingVoiceResult] = useState<any>(null);
+  const [currentMissingInfoIndex, setCurrentMissingInfoIndex] = useState(0);
+
+  const {
+    recordingState,
+    transcript,
+    startRecording,
+    stopRecording,
+    clearTranscript,
+    error: recordingError,
+  } = useLocalVoiceRecording();
 
   const {
     items,
@@ -55,6 +81,7 @@ export default function InventoryScreen() {
     refetch,
     deletingItem,
     updatingItem,
+    refreshing,
   } = useInventory();
 
   const colors = {
@@ -162,6 +189,186 @@ export default function InventoryScreen() {
     return cat ? cat.color : '#6B7280';
   };
 
+  // Voice search functions
+  const handleVoiceSearch = async () => {
+    if (recordingState === 'recording') {
+      await stopRecording();
+    } else {
+      setShowVoiceSearch(true);
+      clearTranscript();
+      await startRecording();
+    }
+  };
+
+  const processVoiceSearch = async (searchTerm: string) => {
+    if (!searchTerm.trim()) return;
+
+    try {
+      setIsVoiceSearching(true);
+      const token = await AsyncStorage.getItem('authToken');
+      const selectedHouseId = await AsyncStorage.getItem('selectedHouseId');
+      const apiUrl = process.env.EXPO_PUBLIC_API_URL || 'http://192.168.29.65:4000';
+
+      if (!token) {
+        Alert.alert('Error', 'Please login again');
+        return;
+      }
+
+      if (!selectedHouseId) {
+        Alert.alert('Error', 'No house selected');
+        return;
+      }
+
+      // Get cached kitchen ID
+      const cachedKitchenKey = `kitchen_${selectedHouseId}`;
+      const kitchenId = await AsyncStorage.getItem(cachedKitchenKey);
+
+      if (!kitchenId) {
+        Alert.alert('Error', 'Kitchen not found');
+        return;
+      }
+
+      const response = await fetch(`${apiUrl}/graphql`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          query: `
+            query SearchInventoryByVoice($kitchenId: ID!, $searchTerm: String!) {
+              searchInventoryByVoice(kitchenId: $kitchenId, searchTerm: $searchTerm) {
+                id
+                name
+                category
+                totalQuantity
+                defaultUnit
+                location
+                similarity
+              }
+            }
+          `,
+          variables: { kitchenId, searchTerm },
+        }),
+      });
+
+      const data = await response.json();
+
+      if (data.errors) {
+        console.error('GraphQL errors:', data.errors);
+        throw new Error(data.errors[0]?.message || 'Failed to search inventory');
+      }
+
+      const results = data.data?.searchInventoryByVoice || [];
+      setVoiceSearchResults(results);
+      
+      if (results.length === 0) {
+        Alert.alert('No Results', `No items found matching "${searchTerm}"`);
+      }
+
+    } catch (error: any) {
+      console.error('Voice search error:', error);
+      if (error.message?.includes('Authentication') || error.message?.includes('Unauthorized')) {
+        Alert.alert('Authentication Error', 'Please login again');
+      } else {
+        Alert.alert('Error', 'Failed to search inventory. Please try again.');
+      }
+    } finally {
+      setIsVoiceSearching(false);
+    }
+  };
+
+  const handleUpdateItem = (item: any) => {
+    setSelectedItemForUpdate(item);
+    setUpdateQuantity(item.totalQuantity.toString());
+    setShowUpdateModal(true);
+  };
+
+  const processVoiceUpdate = async () => {
+    if (!selectedItemForUpdate || !updateQuantity) return;
+
+    try {
+      setIsUpdating(true);
+      const token = await AsyncStorage.getItem('authToken');
+      const selectedHouseId = await AsyncStorage.getItem('selectedHouseId');
+      const apiUrl = process.env.EXPO_PUBLIC_API_URL || 'http://192.168.29.65:4000';
+
+      if (!selectedHouseId) {
+        Alert.alert('Error', 'No house selected');
+        return;
+      }
+
+      // Get cached kitchen ID
+      const cachedKitchenKey = `kitchen_${selectedHouseId}`;
+      const kitchenId = await AsyncStorage.getItem(cachedKitchenKey);
+
+      if (!kitchenId) {
+        Alert.alert('Error', 'Kitchen not found');
+        return;
+      }
+
+      const response = await fetch(`${apiUrl}/graphql`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          query: `
+            mutation UpdateInventoryByVoice($kitchenId: ID!, $itemName: String!, $quantity: Float!) {
+              updateInventoryByVoice(kitchenId: $kitchenId, itemName: $itemName, quantity: $quantity) {
+                success
+                message
+                item {
+                  id
+                  name
+                  totalQuantity
+                  defaultUnit
+                }
+              }
+            }
+          `,
+          variables: {
+            kitchenId,
+            itemName: selectedItemForUpdate.name,
+            quantity: parseFloat(updateQuantity),
+          },
+        }),
+      });
+
+      const data = await response.json();
+
+      if (data.errors) {
+        throw new Error(data.errors[0]?.message || 'Failed to update item');
+      }
+
+      const result = data.data?.updateInventoryByVoice;
+      if (result?.success) {
+        Alert.alert('Success', result.message);
+        setShowUpdateModal(false);
+        setSelectedItemForUpdate(null);
+        setUpdateQuantity('');
+        // Refresh inventory
+        refetch();
+      } else {
+        Alert.alert('Error', result?.message || 'Failed to update item');
+      }
+
+    } catch (error: any) {
+      console.error('Voice update error:', error);
+      Alert.alert('Error', 'Failed to update item. Please try again.');
+    } finally {
+      setIsUpdating(false);
+    }
+  };
+
+  // Handle voice transcript
+  React.useEffect(() => {
+    if (transcript && showVoiceSearch) {
+      processVoiceSearch(transcript);
+    }
+  }, [transcript, showVoiceSearch]);
+
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }}>
       <StatusBar style={isDark ? 'light' : 'dark'} />
@@ -173,24 +380,48 @@ export default function InventoryScreen() {
             <Text style={{ fontSize: 32, fontWeight: 'bold', color: colors.text }}>
               Inventory
             </Text>
-            <TouchableOpacity
-              onPress={() => router.push('/voice-control')}
-              style={{
-                backgroundColor: '#8B5CF6',
-                width: 48,
-                height: 48,
-                borderRadius: 24,
-                alignItems: 'center',
-                justifyContent: 'center',
-                shadowColor: '#8B5CF6',
-                shadowOffset: { width: 0, height: 4 },
-                shadowOpacity: 0.3,
-                shadowRadius: 8,
-                elevation: 4,
-              }}
-            >
-              <Ionicons name="mic" size={24} color="white" />
-            </TouchableOpacity>
+            <View style={{ flexDirection: 'row', gap: 12 }}>
+              <TouchableOpacity
+                onPress={handleVoiceSearch}
+                style={{
+                  backgroundColor: recordingState === 'recording' ? '#EF4444' : '#10B981',
+                  width: 48,
+                  height: 48,
+                  borderRadius: 24,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  shadowColor: recordingState === 'recording' ? '#EF4444' : '#10B981',
+                  shadowOffset: { width: 0, height: 4 },
+                  shadowOpacity: 0.3,
+                  shadowRadius: 8,
+                  elevation: 4,
+                }}
+              >
+                <Ionicons 
+                  name={recordingState === 'recording' ? 'stop' : 'search'} 
+                  size={24} 
+                  color="white" 
+                />
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => router.push('/voice-control')}
+                style={{
+                  backgroundColor: '#8B5CF6',
+                  width: 48,
+                  height: 48,
+                  borderRadius: 24,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  shadowColor: '#8B5CF6',
+                  shadowOffset: { width: 0, height: 4 },
+                  shadowOpacity: 0.3,
+                  shadowRadius: 8,
+                  elevation: 4,
+                }}
+              >
+                <Ionicons name="mic" size={24} color="white" />
+              </TouchableOpacity>
+            </View>
           </View>
 
           {/* Search Bar */}
@@ -223,6 +454,24 @@ export default function InventoryScreen() {
                 <Ionicons name="close-circle" size={20} color={colors.textSecondary} />
               </TouchableOpacity>
             )}
+            <TouchableOpacity
+              onPress={handleVoiceSearch}
+              style={{
+                backgroundColor: recordingState === 'recording' ? '#EF4444' : '#10B981',
+                width: 36,
+                height: 36,
+                borderRadius: 18,
+                alignItems: 'center',
+                justifyContent: 'center',
+                marginLeft: 8,
+              }}
+            >
+              <Ionicons 
+                name={recordingState === 'recording' ? 'stop' : 'mic'} 
+                size={18} 
+                color="white" 
+              />
+            </TouchableOpacity>
           </View>
 
           {/* Categories Horizontal Scroll */}
@@ -345,7 +594,7 @@ export default function InventoryScreen() {
           style={{ flex: 1 }}
           contentContainerStyle={{ paddingHorizontal: 24, paddingBottom: 24 }}
           refreshControl={
-            <RefreshControl refreshing={loading} onRefresh={refetch} />
+            <RefreshControl refreshing={refreshing} onRefresh={refetch} />
           }
         >
           {/* Items List */}
@@ -849,6 +1098,285 @@ export default function InventoryScreen() {
                 )}
               </TouchableOpacity>
             </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Voice Search Results Modal */}
+      <Modal
+        visible={showVoiceSearch}
+        transparent
+        animationType="fade"
+        onRequestClose={() => {
+          setShowVoiceSearch(false);
+          setVoiceSearchResults([]);
+          clearTranscript();
+        }}
+      >
+        <View style={{
+          flex: 1,
+          backgroundColor: 'rgba(0,0,0,0.5)',
+          justifyContent: 'center',
+          alignItems: 'center',
+          padding: 24,
+        }}>
+          <View style={{
+            backgroundColor: colors.surface,
+            borderRadius: 20,
+            padding: 24,
+            width: '100%',
+            maxWidth: 400,
+            maxHeight: '80%',
+          }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
+              <Text style={{ fontSize: 24, fontWeight: 'bold', color: colors.text }}>
+                Voice Search
+              </Text>
+              <TouchableOpacity
+                onPress={() => {
+                  setShowVoiceSearch(false);
+                  setVoiceSearchResults([]);
+                  clearTranscript();
+                }}
+              >
+                <Ionicons name="close" size={24} color={colors.textSecondary} />
+              </TouchableOpacity>
+            </View>
+
+            {/* Recording Status */}
+            <View style={{ alignItems: 'center', marginBottom: 20 }}>
+              <View style={{
+                width: 80,
+                height: 80,
+                borderRadius: 40,
+                backgroundColor: recordingState === 'recording' ? '#EF4444' : '#10B981',
+                alignItems: 'center',
+                justifyContent: 'center',
+                marginBottom: 12,
+              }}>
+                {recordingState === 'processing' || isVoiceSearching ? (
+                  <ActivityIndicator size="large" color="white" />
+                ) : (
+                  <Ionicons 
+                    name={recordingState === 'recording' ? 'mic' : 'search'} 
+                    size={40} 
+                    color="white" 
+                  />
+                )}
+              </View>
+              <Text style={{ fontSize: 16, fontWeight: '600', color: colors.text, textAlign: 'center' }}>
+                {recordingState === 'recording' ? 'Listening...' :
+                 recordingState === 'processing' ? 'Processing...' :
+                 isVoiceSearching ? 'Searching...' :
+                 'Tap to search by voice'}
+              </Text>
+              {transcript && (
+                <Text style={{ fontSize: 14, color: colors.textSecondary, marginTop: 8, textAlign: 'center' }}>
+                  "{transcript}"
+                </Text>
+              )}
+            </View>
+
+            {/* Search Results */}
+            {voiceSearchResults.length > 0 && (
+              <ScrollView style={{ maxHeight: 300 }}>
+                <Text style={{ fontSize: 18, fontWeight: 'bold', color: colors.text, marginBottom: 12 }}>
+                  Search Results ({voiceSearchResults.length})
+                </Text>
+                {voiceSearchResults.map((item, index) => (
+                  <TouchableOpacity
+                    key={index}
+                    onPress={() => handleUpdateItem(item)}
+                    style={{
+                      backgroundColor: isDark ? '#1F2937' : '#F3F4F6',
+                      borderRadius: 12,
+                      padding: 16,
+                      marginBottom: 12,
+                      borderWidth: 1,
+                      borderColor: colors.border,
+                    }}
+                  >
+                    <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
+                      <View style={{
+                        width: 40,
+                        height: 40,
+                        borderRadius: 20,
+                        backgroundColor: getCategoryColor(item.category) + '20',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        marginRight: 12,
+                      }}>
+                        <Ionicons
+                          name={getCategoryIcon(item.category) as any}
+                          size={20}
+                          color={getCategoryColor(item.category)}
+                        />
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={{ fontSize: 16, fontWeight: '600', color: colors.text }}>
+                          {item.name}
+                        </Text>
+                        <Text style={{ fontSize: 14, color: colors.textSecondary }}>
+                          {item.totalQuantity} {item.defaultUnit} • {item.category} • {item.location}
+                        </Text>
+                      </View>
+                      <View style={{ alignItems: 'flex-end' }}>
+                        <Text style={{ fontSize: 12, color: '#10B981', fontWeight: '600' }}>
+                          {Math.round(item.similarity * 100)}% match
+                        </Text>
+                        <Ionicons name="chevron-forward" size={16} color={colors.textSecondary} />
+                      </View>
+                    </View>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            )}
+
+            {/* Action Button */}
+            <TouchableOpacity
+              onPress={handleVoiceSearch}
+              disabled={recordingState === 'processing' || isVoiceSearching}
+              style={{
+                backgroundColor: recordingState === 'recording' ? '#EF4444' : '#10B981',
+                borderRadius: 12,
+                paddingVertical: 16,
+                alignItems: 'center',
+                marginTop: 16,
+                opacity: (recordingState === 'processing' || isVoiceSearching) ? 0.5 : 1,
+              }}
+            >
+              <Text style={{ fontSize: 16, fontWeight: '600', color: 'white' }}>
+                {recordingState === 'recording' ? 'Stop Recording' : 'Start Voice Search'}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Update Quantity Modal */}
+      <Modal
+        visible={showUpdateModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowUpdateModal(false)}
+      >
+        <View style={{
+          flex: 1,
+          backgroundColor: 'rgba(0,0,0,0.5)',
+          justifyContent: 'center',
+          alignItems: 'center',
+          padding: 24,
+        }}>
+          <View style={{
+            backgroundColor: colors.surface,
+            borderRadius: 20,
+            padding: 24,
+            width: '100%',
+            maxWidth: 400,
+          }}>
+            <Text style={{ fontSize: 24, fontWeight: 'bold', color: colors.text, marginBottom: 20 }}>
+              Update Quantity
+            </Text>
+
+            {selectedItemForUpdate && (
+              <>
+                <View style={{
+                  backgroundColor: isDark ? '#1F2937' : '#F3F4F6',
+                  borderRadius: 12,
+                  padding: 16,
+                  marginBottom: 20,
+                }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
+                    <View style={{
+                      width: 40,
+                      height: 40,
+                      borderRadius: 20,
+                      backgroundColor: getCategoryColor(selectedItemForUpdate.category) + '20',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      marginRight: 12,
+                    }}>
+                      <Ionicons
+                        name={getCategoryIcon(selectedItemForUpdate.category) as any}
+                        size={20}
+                        color={getCategoryColor(selectedItemForUpdate.category)}
+                      />
+                    </View>
+                    <View>
+                      <Text style={{ fontSize: 18, fontWeight: '600', color: colors.text }}>
+                        {selectedItemForUpdate.name}
+                      </Text>
+                      <Text style={{ fontSize: 14, color: colors.textSecondary }}>
+                        Current: {selectedItemForUpdate.totalQuantity} {selectedItemForUpdate.defaultUnit}
+                      </Text>
+                    </View>
+                  </View>
+                </View>
+
+                <View style={{ marginBottom: 20 }}>
+                  <Text style={{ fontSize: 14, fontWeight: '600', color: colors.text, marginBottom: 8 }}>
+                    New Quantity:
+                  </Text>
+                  <TextInput
+                    value={updateQuantity}
+                    onChangeText={setUpdateQuantity}
+                    keyboardType="numeric"
+                    placeholder="Enter new quantity"
+                    placeholderTextColor={colors.textSecondary}
+                    style={{
+                      backgroundColor: isDark ? '#374151' : '#F3F4F6',
+                      borderRadius: 12,
+                      paddingHorizontal: 16,
+                      paddingVertical: 12,
+                      fontSize: 16,
+                      color: colors.text,
+                      borderWidth: 1,
+                      borderColor: colors.border,
+                    }}
+                  />
+                </View>
+
+                <View style={{ flexDirection: 'row', gap: 12 }}>
+                  <TouchableOpacity
+                    onPress={() => setShowUpdateModal(false)}
+                    disabled={isUpdating}
+                    style={{
+                      flex: 1,
+                      backgroundColor: isDark ? '#374151' : '#E5E7EB',
+                      borderRadius: 12,
+                      paddingVertical: 16,
+                      alignItems: 'center',
+                      opacity: isUpdating ? 0.5 : 1,
+                    }}
+                  >
+                    <Text style={{ fontSize: 16, fontWeight: '600', color: colors.text }}>
+                      Cancel
+                    </Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    onPress={processVoiceUpdate}
+                    disabled={isUpdating || !updateQuantity}
+                    style={{
+                      flex: 1,
+                      backgroundColor: '#10B981',
+                      borderRadius: 12,
+                      paddingVertical: 16,
+                      alignItems: 'center',
+                      opacity: (isUpdating || !updateQuantity) ? 0.5 : 1,
+                    }}
+                  >
+                    {isUpdating ? (
+                      <ActivityIndicator color="white" />
+                    ) : (
+                      <Text style={{ fontSize: 16, fontWeight: '600', color: 'white' }}>
+                        Update
+                      </Text>
+                    )}
+                  </TouchableOpacity>
+                </View>
+              </>
+            )}
           </View>
         </View>
       </Modal>

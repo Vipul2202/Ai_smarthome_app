@@ -32,11 +32,20 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       setIsLoading(true);
       const token = await AsyncStorage.getItem('authToken');
       const userData = await AsyncStorage.getItem('userData');
+      const tokenExpiry = await AsyncStorage.getItem('tokenExpiry');
       
-      if (token && userData) {
-        const parsedUser = JSON.parse(userData);
-        setUser(parsedUser);
-        console.log('User authenticated:', parsedUser.email);
+      if (token && userData && tokenExpiry) {
+        const expiryDate = new Date(tokenExpiry);
+        const now = new Date();
+        
+        if (now < expiryDate) {
+          const parsedUser = JSON.parse(userData);
+          setUser(parsedUser);
+          console.log('User authenticated:', parsedUser.email);
+        } else {
+          console.log('Token expired, clearing auth');
+          await AsyncStorage.multiRemove(['authToken', 'userData', 'tokenExpiry']);
+        }
       } else {
         console.log('No authentication found');
       }
@@ -73,8 +82,16 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       if (data.data?.login) {
         const { token, user: userData } = data.data.login;
         
-        await AsyncStorage.setItem('authToken', token);
-        await AsyncStorage.setItem('userData', JSON.stringify(userData));
+        // Set token expiry to 15 days from now
+        const expiryDate = new Date();
+        expiryDate.setDate(expiryDate.getDate() + 15);
+        
+        await AsyncStorage.multiSet([
+          ['authToken', token],
+          ['userData', JSON.stringify(userData)],
+          ['tokenExpiry', expiryDate.toISOString()]
+        ]);
+        
         setUser(userData);
         console.log('Login successful:', userData.email);
         return { success: true };
@@ -152,8 +169,16 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       if (data.data?.register) {
         const { token, user: userData } = data.data.register;
         
-        await AsyncStorage.setItem('authToken', token);
-        await AsyncStorage.setItem('userData', JSON.stringify(userData));
+        // Set token expiry to 15 days from now
+        const expiryDate = new Date();
+        expiryDate.setDate(expiryDate.getDate() + 15);
+        
+        await AsyncStorage.multiSet([
+          ['authToken', token],
+          ['userData', JSON.stringify(userData)],
+          ['tokenExpiry', expiryDate.toISOString()]
+        ]);
+        
         setUser(userData);
         console.log('Registration successful:', userData.email);
         return { success: true };
@@ -206,8 +231,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const logout = async () => {
     try {
       setIsLoading(true);
-      await AsyncStorage.removeItem('authToken');
-      await AsyncStorage.removeItem('userData');
+      await AsyncStorage.multiRemove(['authToken', 'userData', 'tokenExpiry']);
       setUser(null);
       console.log('Logout successful');
     } catch (error) {

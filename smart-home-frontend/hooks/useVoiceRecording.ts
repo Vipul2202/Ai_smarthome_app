@@ -48,6 +48,13 @@ export const useVoiceRecording = (): UseVoiceRecordingReturn => {
       setError(null);
       setTranscript('');
       
+      // Stop any existing recording first
+      if (recordingRef.current) {
+        console.log('🛑 Stopping existing recording...');
+        await recordingRef.current.stopAndUnloadAsync();
+        recordingRef.current = null;
+      }
+      
       console.log('🎤 Requesting microphone permission...');
       
       // Request permission
@@ -81,6 +88,12 @@ export const useVoiceRecording = (): UseVoiceRecordingReturn => {
       console.error('Failed to start recording:', err);
       setError(err.message || 'Failed to start recording');
       setRecordingState('error');
+      
+      // Clean up on error
+      if (recordingRef.current) {
+        recordingRef.current.stopAndUnloadAsync().catch(() => {});
+        recordingRef.current = null;
+      }
     }
   };
 

@@ -24,6 +24,8 @@ LogBox.ignoreLogs([
   'INTERNAL_SERVER_ERROR',
   'Transcription failed',
   'Failed to stop recording',
+  'The action \'GO_BACK\' was not handled by any navigator',
+  'GO_BACK',
 ]);
 
 export default function RootLayout() {
@@ -74,6 +76,15 @@ export default function RootLayout() {
                   <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
                   <Stack.Screen name="(auth)" options={{ headerShown: false }} />
                   <Stack.Screen name="houses" options={{ headerShown: false }} />
+                  <Stack.Screen name="voice-control" options={{ headerShown: false }} />
+                  <Stack.Screen name="inventory" options={{ headerShown: false }} />
+                  <Stack.Screen name="recipes" options={{ headerShown: false }} />
+                  <Stack.Screen name="settings" options={{ headerShown: false }} />
+                  <Stack.Screen name="shopping" options={{ headerShown: false }} />
+                  <Stack.Screen name="about" options={{ headerShown: false }} />
+                  <Stack.Screen name="help" options={{ headerShown: false }} />
+                  <Stack.Screen name="profile" options={{ headerShown: false }} />
+                  <Stack.Screen name="notifications" options={{ headerShown: false }} />
                   <Stack.Screen name="modal" options={{ presentation: 'modal' }} />
                 </Stack>
               </HouseProvider>

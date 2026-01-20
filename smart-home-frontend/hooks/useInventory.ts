@@ -15,6 +15,7 @@ export const useInventory = ({ kitchenId }: UseInventoryProps = {}) => {
   const [addingItem, setAddingItem] = useState(false);
   const [updatingItem, setUpdatingItem] = useState(false);
   const [deletingItem, setDeletingItem] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
 
   // Get or create user's kitchen for the selected house
   const getOrCreateKitchen = async (token: string, apiUrl: string): Promise<string | null> => {
@@ -165,9 +166,14 @@ export const useInventory = ({ kitchenId }: UseInventoryProps = {}) => {
   };
 
   // Fetch inventory items from backend
-  const fetchInventoryItems = async () => {
+  const fetchInventoryItems = async (isRefresh = false) => {
     try {
-      setLoading(true);
+      if (isRefresh) {
+        setRefreshing(true);
+      } else {
+        setLoading(true);
+      }
+      
       const token = await AsyncStorage.getItem('authToken');
       const apiUrl = process.env.EXPO_PUBLIC_API_URL || 'http://192.168.29.65:4000';
 
@@ -226,9 +232,7 @@ export const useInventory = ({ kitchenId }: UseInventoryProps = {}) => {
       // Check for errors first
       if (data.errors) {
         console.log('⚠️ Database connection issue - using empty inventory');
-        // Don't log the full error to avoid red screen
         setInventoryItems([]);
-        setLoading(false);
         return;
       }
 
@@ -256,6 +260,7 @@ export const useInventory = ({ kitchenId }: UseInventoryProps = {}) => {
       setInventoryItems([]);
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   };
 
@@ -531,7 +536,7 @@ export const useInventory = ({ kitchenId }: UseInventoryProps = {}) => {
   };
 
   const refetch = async () => {
-    await fetchInventoryItems();
+    await fetchInventoryItems(true);
   };
 
   const searchItems = (query: string) => {
@@ -566,6 +571,7 @@ export const useInventory = ({ kitchenId }: UseInventoryProps = {}) => {
     addingItem,
     updatingItem,
     deletingItem,
+    refreshing,
     
     // Actions
     addItem,

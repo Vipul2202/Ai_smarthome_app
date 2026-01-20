@@ -130,33 +130,8 @@ export const HouseProvider: React.FC<HouseProviderProps> = ({ children }) => {
       
       // Only use mock data in development if API is completely unavailable
       if (__DEV__ && (errorMessage.includes('Network request failed') || errorMessage.includes('fetch'))) {
-        console.log('API unavailable, using mock houses for development');
-        
-        const mockHouses: House[] = [
-          {
-            id: '1',
-            userId: '1',
-            name: 'My Home',
-            description: 'Main family house with kitchen, living room, and bedrooms',
-            createdDate: new Date().toISOString(),
-          },
-          {
-            id: '2',
-            userId: '1',
-            name: 'Summer House',
-            description: 'Vacation home by the lake',
-            createdDate: new Date(Date.now() - 86400000).toISOString(),
-          },
-        ];
-        
-        setHousesState(mockHouses);
-        
-        // If no house is selected and we have houses, select the first one
-        if (!selectedHouse && mockHouses.length > 0) {
-          setSelectedHouse(mockHouses[0]);
-        }
-        
-        console.log('Mock houses loaded:', mockHouses.length);
+        console.log('API unavailable, continuing with empty houses list');
+        setHousesState([]);
       } else {
         // For real network errors, set empty array but don't throw
         console.log('Network error loading houses, continuing with empty list');

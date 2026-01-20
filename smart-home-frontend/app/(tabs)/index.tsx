@@ -123,7 +123,7 @@ export default function DashboardScreen() {
         <View style={{ paddingHorizontal: 24, paddingTop: 16, paddingBottom: 24 }}>
           {/* House Name Display */}
           <TouchableOpacity
-            onPress={() => router.push('/select-house' as any)}
+            onPress={() => router.push('/houses' as any)}
             style={{
               backgroundColor: isDark ? '#1F2937' : '#FFFFFF',
               paddingHorizontal: 16,
@@ -172,7 +172,12 @@ export default function DashboardScreen() {
                 </Text>
               </View>
             </View>
-            <Ionicons name="chevron-forward" size={20} color={isDark ? '#9CA3AF' : '#6B7280'} />
+            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+              <Text style={{ fontSize: 12, color: '#3B82F6', fontWeight: '600', marginRight: 4 }}>
+                Manage
+              </Text>
+              <Ionicons name="chevron-forward" size={20} color={isDark ? '#9CA3AF' : '#6B7280'} />
+            </View>
           </TouchableOpacity>
 
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>

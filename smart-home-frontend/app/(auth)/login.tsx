@@ -58,14 +58,19 @@ export default function LoginScreen() {
     try {
       const result = await login(email, password);
       if (result.success) {
-        // Clear any previously selected house so user must select again
+        // Check if user has a previously selected house
         const AsyncStorage = (await import('@react-native-async-storage/async-storage')).default;
-        await AsyncStorage.removeItem('selectedHouseId');
-        await AsyncStorage.removeItem('selectedHouseName');
-        console.log('🏠 Cleared house selection - user must select house');
+        const lastSelectedHouseId = await AsyncStorage.getItem('selectedHouseId');
         
-        // Redirect to main index which will handle the flow
-        router.replace('/');
+        if (lastSelectedHouseId) {
+          console.log('🏠 User has previously selected house, redirecting to dashboard');
+          // Redirect directly to dashboard with last selected house
+          router.replace('/(tabs)');
+        } else {
+          console.log('🏠 No previously selected house, user must select');
+          // Redirect to main index which will handle house selection flow
+          router.replace('/');
+        }
       } else {
         // Handle specific error cases
         const errorMessage = result.error || 'Login failed';

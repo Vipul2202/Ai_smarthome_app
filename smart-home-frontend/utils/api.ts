@@ -14,9 +14,9 @@ async function testApiUrl(url: string): Promise<boolean> {
   try {
     console.log(`🔍 Testing API URL: ${url}`);
     
-    // Create a timeout promise
+    // Create a timeout promise - increased to 10 seconds
     const timeoutPromise = new Promise<never>((_, reject) => {
-      setTimeout(() => reject(new Error('Timeout after 5 seconds')), 5000);
+      setTimeout(() => reject(new Error('Timeout after 10 seconds')), 10000);
     });
 
     // Race between fetch and timeout
