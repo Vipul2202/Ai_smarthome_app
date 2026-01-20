@@ -21,7 +21,8 @@
     "test": "jest",
     "test:watch": "jest --watch",
     "clean": "rimraf dist node_modules",
-    "render:build": "npm ci --production=false && npm run db:generate && npx tsc || (echo 'Build completed with warnings' && exit 0)",
+    "render:build": "npm ci --production=false && npm run db:generate && npm run build:typescript",
+    "build:typescript": "mkdir -p dist && (npx tsc --project tsconfig.render.json || npx tsc --project . || npx tsc src/server.ts --outDir dist --target ES2020 --module commonjs --esModuleInterop --skipLibCheck)",
     "render:start": "npm start"
   },
   "dependencies": {
