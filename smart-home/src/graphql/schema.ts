@@ -197,6 +197,51 @@ export const typeDefs: DocumentNode = gql`
     EXPIRED
   }
 
+  # Voice Control Types
+  type VoiceIntent {
+    intent: VoiceIntentType!
+    item: VoiceItemData!
+    confidence: Float!
+    missingInfo: [String!]!
+  }
+
+  enum VoiceIntentType {
+    ADD
+    UPDATE
+    SEARCH
+    DELETE
+    UNKNOWN
+  }
+
+  type VoiceItemData {
+    name: String!
+    quantity: Float
+    unit: String
+    category: String
+    location: String
+  }
+
+  type InventorySearchResult {
+    id: ID!
+    name: String!
+    category: String!
+    totalQuantity: Float!
+    defaultUnit: String!
+    location: String!
+    similarity: Float!
+  }
+
+  type VoiceUpdateResult {
+    success: Boolean!
+    message: String!
+    item: InventorySearchResult
+  }
+
+  type SpeechGenerationResult {
+    success: Boolean!
+    speechData: String
+  }
+
   # Shopping Types
   type ShoppingList {
     id: ID!
@@ -877,23 +922,6 @@ export const typeDefs: DocumentNode = gql`
     key: String!
   }
 
-  # Voice Control Types
-  type VoiceCommandResult {
-    intent: String!
-    item: VoiceItem!
-    confidence: Float!
-    transcript: String!
-  }
-
-  type VoiceItem {
-    raw_name: String
-    normalized_name: String
-    category: String
-    quantity: Float
-    unit: String
-    location: String
-  }
-
   type ForgotPasswordResponse {
     success: Boolean!
     message: String!
@@ -1014,6 +1042,9 @@ export const typeDefs: DocumentNode = gql`
     # Notifications
     notifications(limit: Int, unreadOnly: Boolean): [Notification!]!
     unreadNotificationCount: Int!
+
+    # Voice Control
+    searchInventoryByVoice(kitchenId: ID!, searchTerm: String!): [InventorySearchResult!]!
   }
 
   # Mutations
@@ -1103,6 +1134,11 @@ export const typeDefs: DocumentNode = gql`
     toggleRecipeFavorite(recipeId: ID!): RecipeHistory!
     deleteRecipe(recipeId: ID!): Boolean!
 
+    # Voice Control
+    processVoiceIntent(transcript: String!): VoiceIntent!
+    updateInventoryByVoice(kitchenId: ID!, itemName: String!, quantity: Float!): VoiceUpdateResult!
+    generateMissingInfoSpeech(missingInfo: [String!]!): SpeechGenerationResult!
+
     # Meal Planning
     createMealPlan(input: CreateMealPlanInput!): MealPlan!
     updateMealPlan(id: ID!, input: UpdateMealPlanInput!): MealPlan!
@@ -1143,9 +1179,6 @@ export const typeDefs: DocumentNode = gql`
     deleteAllNotifications: Int!
     sendTestNotification(title: String, message: String): Boolean!
     updateNotificationPreferences(preferences: NotificationPreferencesInput!): Boolean!
-
-    # Voice Control
-    processVoiceCommand(transcript: String!): VoiceCommandResult!
   }
 
   # Subscriptions

@@ -1,4 +1,6 @@
 import { Context, requireKitchenAccess } from '../context';
+import { processVoiceIntent, askForMissingInfo } from '../../services/voiceIntentService';
+import { searchInventoryItems, findExactItem } from '../../services/inventorySearchService';
 
 export const inventoryResolvers = {
   Query: {
@@ -67,6 +69,18 @@ export const inventoryResolvers = {
 
       // Return only items that have expiring batches
       return items.filter((item: any) => item.batches.length > 0);
+    },
+
+    searchInventoryByVoice: async (_: any, { kitchenId, searchTerm }: any, context: Context) => {
+      await requireKitchenAccess(context, kitchenId);
+      
+      try {
+        const results = await searchInventoryItems(kitchenId, searchTerm);
+        return results;
+      } catch (error) {
+        console.error('Error searching inventory:', error);
+        return [];
+      }
     },
   },
 
@@ -249,6 +263,87 @@ export const inventoryResolvers = {
       }
 
       return true;
+    },
+
+    // Voice-related mutations
+    processVoiceIntent: async (_: any, { transcript }: any, context: Context) => {
+      try {
+        const result = await processVoiceIntent(transcript);
+        return result;
+      } catch (error) {
+        console.error('Error processing voice intent:', error);
+        throw new Error('Failed to process voice command');
+      }
+    },
+
+    updateInventoryByVoice: async (_: any, { kitchenId, itemName, quantity }: any, context: Context) => {
+      await requireKitchenAccess(context, kitchenId, 'MEMBER');
+      
+      try {
+        // Find the item
+        const existingItem = await findExactItem(kitchenId, itemName);
+        
+        if (!existingItem) {
+          throw new Error(`Item "${itemName}" not found in inventory`);
+        }
+
+        // Get the most recent active batch
+        const batch = await context.prisma.inventoryBatch.findFirst({
+          where: {
+            itemId: existingItem.id,
+            status: 'ACTIVE',
+          },
+          orderBy: { createdAt: 'desc' },
+        });
+
+        if (batch) {
+          // Update existing batch
+          await context.prisma.inventoryBatch.update({
+            where: { id: batch.id },
+            data: { quantity },
+          });
+        } else {
+          // Create new batch
+          await context.prisma.inventoryBatch.create({
+            data: {
+              itemId: existingItem.id,
+              quantity,
+              unit: existingItem.defaultUnit,
+              purchaseDate: new Date(),
+            },
+          });
+        }
+
+        return {
+          success: true,
+          message: `Updated ${itemName} quantity to ${quantity}`,
+          item: existingItem,
+        };
+
+      } catch (error) {
+        console.error('Error updating inventory by voice:', error);
+        return {
+          success: false,
+          message: error.message || 'Failed to update inventory',
+          item: null,
+        };
+      }
+    },
+
+    generateMissingInfoSpeech: async (_: any, { missingInfo }: any, context: Context) => {
+      try {
+        const speechBase64 = await askForMissingInfo(missingInfo);
+        return {
+          success: true,
+          speechData: speechBase64,
+        };
+      } catch (error) {
+        console.error('Error generating speech:', error);
+        return {
+          success: false,
+          speechData: null,
+        };
+      }
     },
   },
 };

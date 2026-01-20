@@ -2,11 +2,15 @@ services:
   - type: web
     name: smart-home
     env: node
-    buildCommand: npm ci && npm run build
-    startCommand: npm start
+    runtime: node
+    buildCommand: npm run render:build
+    startCommand: npm run render:start
     envVars:
       - key: NODE_ENV
         value: production
       - key: PORT
         value: 10000
+      - key: NODE_OPTIONS
+        value: "--max-old-space-size=1024"
     healthCheckPath: /health
+    plan: starter

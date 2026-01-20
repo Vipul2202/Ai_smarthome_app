@@ -149,6 +149,12 @@ model InventoryItem {
   batches     InventoryBatch[]
   kitchen     Kitchen          @relation(fields: [kitchenId], references: [id], onDelete: Cascade)
   usageLogs   UsageLog[]
+
+  @@index([kitchenId])
+  @@index([name])
+  @@index([category])
+  @@index([kitchenId, name])
+  @@index([kitchenId, category])
 }
 
 model InventoryBatch {

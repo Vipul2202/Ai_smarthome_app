@@ -18,7 +18,6 @@ import { nutritionResolvers } from './nutrition';
 import { wasteResolvers } from './waste';
 import { timerResolvers } from './timer';
 import { notificationResolvers } from './notification';
-import { voiceResolvers } from './voice';
 
 export const resolvers: any = {
   DateTime: DateTimeResolver,
@@ -64,7 +63,6 @@ export const resolvers: any = {
     ...wasteResolvers.Mutation,
     ...timerResolvers.Mutation,
     ...notificationResolvers.Mutation,
-    ...voiceResolvers.Mutation,
   },
 
   // Type resolvers
