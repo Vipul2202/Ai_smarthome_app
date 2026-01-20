@@ -18,7 +18,10 @@ console.log('Current directory:', process.cwd());
 // Check if required files exist
 const requiredFiles = [
   'dist/server.js',
-  'package.json',
+  'package.json'
+];
+
+const optionalFiles = [
   'node_modules/@prisma/client'
 ];
 
@@ -31,6 +34,12 @@ for (const file of requiredFiles) {
     console.error(`❌ Critical file missing: ${file}`);
     process.exit(1);
   }
+}
+
+console.log('\n📋 Checking optional files...');
+for (const file of optionalFiles) {
+  const exists = fs.existsSync(path.join(process.cwd(), file));
+  console.log(`${exists ? '✅' : '⚠️'} ${file}: ${exists ? 'Found' : 'Not found (optional)'}`);
 }
 
 // Check environment variables
