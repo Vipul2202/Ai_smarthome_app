@@ -1,5 +1,5 @@
 import { Context, requireAuth } from '../context';
-import { scanImageWithAI, processAIScanResult } from '../../services/ai';
+import { scanImageWithAI, processAIScanResult, categorizeProductWithAI } from '../../services/ai';
 
 export const aiResolvers: any = {
   Query: {
@@ -10,6 +10,22 @@ export const aiResolvers: any = {
         orderBy: { createdAt: 'desc' },
         take: limit,
       });
+    },
+
+    categorizeProduct: async (_: any, { productName }: any, context: Context) => {
+      requireAuth(context);
+      
+      if (!productName || !productName.trim()) {
+        throw new Error('Product name is required');
+      }
+
+      try {
+        const result = await categorizeProductWithAI(productName.trim());
+        return result;
+      } catch (error) {
+        console.error('Product categorization failed:', error);
+        throw new Error('Failed to categorize product. Please try again.');
+      }
     },
   },
 

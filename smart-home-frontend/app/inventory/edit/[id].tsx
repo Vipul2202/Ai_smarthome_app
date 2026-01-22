@@ -26,6 +26,7 @@ import { Modal } from '@/components/ui/Modal';
 import { Badge } from '@/components/ui/Badge';
 import { useInventory } from '@/hooks/useInventory';
 import { CATEGORIZE_PRODUCT } from '@/lib/graphql/queries';
+import { InventoryItem } from '@/types';
 
 const categories = [
   { id: 'fruits', label: 'Fruits', icon: 'leaf', color: '#10B981' },
@@ -44,29 +45,22 @@ const units = [
   'pieces', 'kg', 'g', 'lbs', 'oz', 'liters', 'ml', 'cups', 'tbsp', 'tsp', 'cans', 'bottles', 'boxes', 'bags'
 ];
 
-export default function AddItemScreen() {
+export default function EditItemScreen() {
   const colorScheme = useColorScheme();
   const isDark = colorScheme === 'dark';
-  const { addItem, loading } = useInventory();
+  const { id } = useLocalSearchParams<{ id: string }>();
+  const { getItem, updateItem, loading } = useInventory();
   
-  // Get barcode and product data from route params if coming from scanner
-  const { 
-    barcode: scannedBarcode,
-    productName,
-    productBrand,
-    productCategory,
-    productImage
-  } = useLocalSearchParams();
-  
+  const [item, setItem] = useState<InventoryItem | null>(null);
   const [formData, setFormData] = useState({
-    name: (productName as string) || '',
-    category: (productCategory as string) || '',
+    name: '',
+    category: '',
     quantity: '',
     unit: 'pieces',
     expiryDate: null as Date | null,
-    barcode: (scannedBarcode as string) || '',
-    notes: (productBrand as string) ? `Brand: ${productBrand}` : '',
-    image: (productImage as string) || null,
+    barcode: '',
+    notes: '',
+    image: null as string | null,
   });
   
   const [showDatePicker, setShowDatePicker] = useState(false);
@@ -79,6 +73,7 @@ export default function AddItemScreen() {
     reasoning: string;
   } | null>(null);
   const [categorizingProduct, setCategorizingProduct] = useState(false);
+  const [originalName, setOriginalName] = useState('');
 
   // GraphQL query for AI categorization
   const [categorizeProduct] = useLazyQuery(CATEGORIZE_PRODUCT, {
@@ -86,50 +81,65 @@ export default function AddItemScreen() {
       if (data?.categorizeProduct) {
         const result = data.categorizeProduct;
         setAiCategorization(result);
-        
-        // Always auto-set category from AI
-        setFormData(prev => ({ ...prev, category: result.category }));
         setCategorizingProduct(false);
       }
     },
     onError: (error) => {
       console.error('AI categorization error:', error);
       setCategorizingProduct(false);
-      // Set a default category if AI fails
-      setFormData(prev => ({ ...prev, category: 'other' }));
       setAiCategorization({
-        category: 'other',
+        category: formData.category || 'other',
         confidence: 0.5,
-        reasoning: 'AI categorization failed, using default category'
+        reasoning: 'AI categorization failed, keeping current category'
       });
     }
   });
 
-  // Auto-categorize when product name changes
   useEffect(() => {
-    if (formData.name.trim().length > 2) {
+    loadItem();
+  }, [id]);
+
+  // Auto-categorize when product name changes (but not on initial load)
+  useEffect(() => {
+    if (formData.name.trim().length > 2 && formData.name !== originalName) {
       setCategorizingProduct(true);
       categorizeProduct({
         variables: { productName: formData.name.trim() }
       });
-    } else {
+    } else if (formData.name === originalName) {
       setAiCategorization(null);
-      // Clear category if product name is too short and not from scanned product
-      if (formData.category && !productCategory) {
-        setFormData(prev => ({ ...prev, category: '' }));
-      }
     }
-  }, [formData.name, categorizeProduct]);
+  }, [formData.name, originalName, categorizeProduct]);
+
+  const loadItem = async () => {
+    if (!id) return;
+    try {
+      const itemData = await getItem(id);
+      if (itemData) {
+        setItem(itemData);
+        setOriginalName(itemData.name);
+        setFormData({
+          name: itemData.name,
+          category: itemData.category || '',
+          quantity: itemData.quantity?.toString() || '',
+          unit: itemData.unit || 'pieces',
+          expiryDate: itemData.expiryDate ? new Date(itemData.expiryDate) : null,
+          barcode: itemData.barcode || '',
+          notes: itemData.notes || '',
+          image: itemData.image || null,
+        });
+      }
+    } catch (error) {
+      Alert.alert('Error', 'Failed to load item details');
+      router.back();
+    }
+  };
 
   const validateForm = () => {
     const newErrors: Record<string, string> = {};
     
     if (!formData.name.trim()) {
       newErrors.name = 'Product name is required';
-    }
-    
-    if (!formData.category) {
-      newErrors.category = 'Category is required (AI will suggest one based on product name)';
     }
     
     if (!formData.quantity || parseFloat(formData.quantity) <= 0) {
@@ -141,22 +151,10 @@ export default function AddItemScreen() {
   };
 
   const handleSubmit = async () => {
-    if (!validateForm()) return;
-    
-    // Check if we're still categorizing
-    if (categorizingProduct) {
-      Alert.alert('Please wait', 'AI is still categorizing the product. Please wait a moment.');
-      return;
-    }
-    
-    // Check if category is missing
-    if (!formData.category) {
-      Alert.alert('Category Required', 'Please wait for AI to categorize the product or select a category manually.');
-      return;
-    }
+    if (!validateForm() || !item) return;
     
     try {
-      const result = await addItem({
+      const result = await updateItem(item.id, {
         name: formData.name.trim(),
         category: formData.category,
         quantity: parseFloat(formData.quantity),
@@ -168,14 +166,14 @@ export default function AddItemScreen() {
       });
       
       if (result.success) {
-        Alert.alert('Success', 'Item added successfully!', [
+        Alert.alert('Success', 'Item updated successfully!', [
           { text: 'OK', onPress: () => router.back() }
         ]);
       } else {
-        Alert.alert('Error', result.error || 'Failed to add item');
+        Alert.alert('Error', result.error || 'Failed to update item');
       }
     } catch (error) {
-      Alert.alert('Error', 'Failed to add item. Please try again.');
+      Alert.alert('Error', 'Failed to update item. Please try again.');
     }
   };
 
@@ -218,6 +216,18 @@ export default function AddItemScreen() {
 
   const selectedCategory = categories.find(cat => cat.id === formData.category);
 
+  if (!item) {
+    return (
+      <SafeAreaView style={[styles.container, { backgroundColor: isDark ? '#111827' : '#F9FAFB' }]}>
+        <View style={styles.loadingContainer}>
+          <Text style={[styles.loadingText, { color: isDark ? '#FFFFFF' : '#111827' }]}>
+            Loading item...
+          </Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: isDark ? '#111827' : '#F9FAFB' }]}>
       <StatusBar style="auto" />
@@ -231,7 +241,7 @@ export default function AddItemScreen() {
           <Ionicons name="arrow-back" size={24} color={isDark ? '#FFFFFF' : '#111827'} />
         </TouchableOpacity>
         <Text style={[styles.headerTitle, { color: isDark ? '#FFFFFF' : '#111827' }]}>
-          Add Item
+          Edit Item
         </Text>
         <View style={{ width: 24 }} />
       </View>
@@ -308,8 +318,8 @@ export default function AddItemScreen() {
                 )}
               </View>
 
-              {/* AI Categorization Result - Always show when available */}
-              {(aiCategorization || categorizingProduct) && (
+              {/* AI Categorization Result - Show when name changes */}
+              {aiCategorization && formData.name !== originalName && (
                 <View style={[styles.aiResultContainer, { 
                   backgroundColor: isDark ? '#064E3B' : '#ECFDF5',
                   borderColor: isDark ? '#10B981' : '#059669',
@@ -317,82 +327,83 @@ export default function AddItemScreen() {
                   <View style={styles.aiResultHeader}>
                     <Ionicons name="sparkles" size={20} color="#10B981" />
                     <Text style={[styles.aiResultTitle, { color: isDark ? '#10B981' : '#047857' }]}>
-                      {categorizingProduct ? 'AI is categorizing...' : 'AI Category Assignment'}
+                      AI Category Suggestion
                     </Text>
-                    {aiCategorization && (
-                      <Badge 
-                        text={`${Math.round(aiCategorization.confidence * 100)}%`}
-                        color={aiCategorization.confidence > 0.8 ? '#10B981' : aiCategorization.confidence > 0.6 ? '#F59E0B' : '#EF4444'}
-                      />
-                    )}
+                    <Badge 
+                      text={`${Math.round(aiCategorization.confidence * 100)}%`}
+                      color={aiCategorization.confidence > 0.8 ? '#10B981' : aiCategorization.confidence > 0.6 ? '#F59E0B' : '#EF4444'}
+                    />
                   </View>
-                  {aiCategorization && (
-                    <>
-                      <Text style={[styles.aiResultText, { color: isDark ? '#D1FAE5' : '#065F46' }]}>
-                        <Text style={{ fontWeight: '600' }}>
-                          Category: {categories.find(cat => cat.id === aiCategorization.category)?.label || aiCategorization.category}
-                        </Text>
-                        <Text style={{ color: isDark ? '#10B981' : '#059669' }}> ✓ Applied automatically</Text>
-                      </Text>
-                      <Text style={[styles.aiReasoningText, { color: isDark ? '#A7F3D0' : '#047857' }]}>
-                        {aiCategorization.reasoning}
-                      </Text>
-                      <View style={styles.aiActionButtons}>
-                        <TouchableOpacity
-                          onPress={() => setShowCategoryModal(true)}
-                          style={[styles.editCategoryButton, { 
-                            borderColor: isDark ? '#10B981' : '#059669',
-                          }]}
-                        >
-                          <Ionicons name="create-outline" size={16} color={isDark ? '#10B981' : '#059669'} />
-                          <Text style={[styles.editCategoryText, { color: isDark ? '#10B981' : '#059669' }]}>
-                            Change category
-                          </Text>
-                        </TouchableOpacity>
-                      </View>
-                    </>
-                  )}
-                </View>
-              )}
-
-              {/* Category Display - Show selected category */}
-              {formData.category && (
-                <View style={styles.section}>
-                  <Text style={[styles.sectionLabel, { color: isDark ? '#D1D5DB' : '#374151' }]}>
-                    Selected Category
+                  <Text style={[styles.aiResultText, { color: isDark ? '#D1FAE5' : '#065F46' }]}>
+                    <Text style={{ fontWeight: '600' }}>
+                      Suggested: {categories.find(cat => cat.id === aiCategorization.category)?.label || aiCategorization.category}
+                    </Text>
                   </Text>
-                  <View style={[styles.categoryDisplay, { 
-                    backgroundColor: isDark ? '#1F2937' : '#FFFFFF',
-                    borderColor: isDark ? '#10B981' : '#059669',
-                  }]}>
-                    <View style={styles.categoryDisplayContent}>
-                      {selectedCategory && (
-                        <>
-                          <Ionicons 
-                            name={selectedCategory.icon as any} 
-                            size={24} 
-                            color={selectedCategory.color} 
-                          />
-                          <Text style={[styles.categoryDisplayText, { color: isDark ? '#FFFFFF' : '#111827' }]}>
-                            {selectedCategory.label}
-                          </Text>
-                          <Ionicons 
-                            name="sparkles" 
-                            size={16} 
-                            color={isDark ? '#10B981' : '#059669'}
-                          />
-                        </>
-                      )}
-                    </View>
+                  <Text style={[styles.aiReasoningText, { color: isDark ? '#A7F3D0' : '#047857' }]}>
+                    {aiCategorization.reasoning}
+                  </Text>
+                  <View style={styles.aiActionButtons}>
+                    <TouchableOpacity
+                      onPress={() => setFormData(prev => ({ ...prev, category: aiCategorization.category }))}
+                      style={[styles.acceptSuggestionButton, { 
+                        backgroundColor: isDark ? '#10B981' : '#059669',
+                        borderColor: 'transparent',
+                      }]}
+                    >
+                      <Text style={[styles.acceptSuggestionText, { color: '#FFFFFF' }]}>
+                        Use AI suggestion
+                      </Text>
+                    </TouchableOpacity>
                     <TouchableOpacity
                       onPress={() => setShowCategoryModal(true)}
-                      style={styles.editCategoryIcon}
+                      style={[styles.editCategoryButton, { 
+                        borderColor: isDark ? '#10B981' : '#059669',
+                      }]}
                     >
-                      <Ionicons name="create-outline" size={20} color={isDark ? '#9CA3AF' : '#6B7280'} />
+                      <Ionicons name="create-outline" size={16} color={isDark ? '#10B981' : '#059669'} />
+                      <Text style={[styles.editCategoryText, { color: isDark ? '#10B981' : '#059669' }]}>
+                        Choose manually
+                      </Text>
                     </TouchableOpacity>
                   </View>
                 </View>
               )}
+
+              {/* Category Display */}
+              <View style={styles.section}>
+                <Text style={[styles.sectionLabel, { color: isDark ? '#D1D5DB' : '#374151' }]}>
+                  Category {formData.name === originalName ? '(Current)' : ''}
+                </Text>
+                <View style={[styles.categoryDisplay, { 
+                  backgroundColor: isDark ? '#1F2937' : '#FFFFFF',
+                  borderColor: selectedCategory ? selectedCategory.color : (isDark ? '#4B5563' : '#D1D5DB'),
+                }]}>
+                  <View style={styles.categoryDisplayContent}>
+                    {selectedCategory ? (
+                      <>
+                        <Ionicons 
+                          name={selectedCategory.icon as any} 
+                          size={24} 
+                          color={selectedCategory.color} 
+                        />
+                        <Text style={[styles.categoryDisplayText, { color: isDark ? '#FFFFFF' : '#111827' }]}>
+                          {selectedCategory.label}
+                        </Text>
+                      </>
+                    ) : (
+                      <Text style={[styles.categoryDisplayPlaceholder, { color: isDark ? '#9CA3AF' : '#6B7280' }]}>
+                        No category selected
+                      </Text>
+                    )}
+                  </View>
+                  <TouchableOpacity
+                    onPress={() => setShowCategoryModal(true)}
+                    style={styles.editCategoryIcon}
+                  >
+                    <Ionicons name="create-outline" size={20} color={isDark ? '#9CA3AF' : '#6B7280'} />
+                  </TouchableOpacity>
+                </View>
+              </View>
 
               {/* Quantity and Unit */}
               <View style={styles.quantityRow}>
@@ -456,8 +467,6 @@ export default function AddItemScreen() {
                   value={formData.barcode}
                   onChangeText={(text) => setFormData(prev => ({ ...prev, barcode: text }))}
                   leftIcon="barcode"
-                  rightIcon="scan"
-                  onRightIconPress={() => router.push('/inventory/scan')}
                 />
               </View>
 
@@ -483,7 +492,7 @@ export default function AddItemScreen() {
           borderTopColor: isDark ? '#374151' : '#E5E7EB',
         }]}>
           <Button
-            title="Add Item"
+            title="Update Item"
             onPress={handleSubmit}
             loading={loading}
             style={styles.submitButton}
@@ -500,17 +509,6 @@ export default function AddItemScreen() {
       >
         <ScrollView showsVerticalScrollIndicator={false}>
           <View style={styles.modalContent}>
-            {aiCategorization && (
-              <View style={[styles.aiSuggestionHeader, { 
-                backgroundColor: isDark ? '#064E3B' : '#ECFDF5',
-                borderColor: isDark ? '#10B981' : '#059669',
-              }]}>
-                <Ionicons name="sparkles" size={16} color="#10B981" />
-                <Text style={[styles.aiSuggestionHeaderText, { color: isDark ? '#10B981' : '#047857' }]}>
-                  AI suggests: {categories.find(cat => cat.id === aiCategorization.category)?.label}
-                </Text>
-              </View>
-            )}
             {categories.map((category) => (
               <TouchableOpacity
                 key={category.id}
@@ -518,11 +516,7 @@ export default function AddItemScreen() {
                   setFormData(prev => ({ ...prev, category: category.id }));
                   setShowCategoryModal(false);
                 }}
-                style={[styles.modalItem, { 
-                  backgroundColor: isDark ? '#374151' : '#F9FAFB',
-                  borderWidth: aiCategorization?.category === category.id ? 2 : 0,
-                  borderColor: aiCategorization?.category === category.id ? '#10B981' : 'transparent',
-                }]}
+                style={[styles.modalItem, { backgroundColor: isDark ? '#374151' : '#F9FAFB' }]}
               >
                 <Ionicons 
                   name={category.icon as any} 
@@ -532,12 +526,6 @@ export default function AddItemScreen() {
                 <Text style={[styles.modalItemText, { color: isDark ? '#FFFFFF' : '#111827' }]}>
                   {category.label}
                 </Text>
-                {aiCategorization?.category === category.id && (
-                  <View style={styles.aiSuggestionBadge}>
-                    <Ionicons name="sparkles" size={12} color="#10B981" />
-                    <Text style={[styles.aiSuggestionBadgeText, { color: '#10B981' }]}>AI</Text>
-                  </View>
-                )}
                 {formData.category === category.id && (
                   <Ionicons 
                     name="checkmark" 
@@ -609,6 +597,14 @@ export default function AddItemScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  loadingText: {
+    fontSize: 16,
   },
   header: {
     flexDirection: 'row',
@@ -756,33 +752,6 @@ const styles = StyleSheet.create({
   checkmark: {
     marginLeft: 'auto',
   },
-  aiSuggestionHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: 12,
-    borderRadius: 8,
-    borderWidth: 1,
-    marginBottom: 12,
-  },
-  aiSuggestionHeaderText: {
-    fontSize: 14,
-    fontWeight: '500',
-    marginLeft: 8,
-  },
-  aiSuggestionBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#ECFDF5',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 4,
-    marginLeft: 8,
-  },
-  aiSuggestionBadgeText: {
-    fontSize: 10,
-    fontWeight: '600',
-    marginLeft: 2,
-  },
   aiStatusContainer: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -863,6 +832,9 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '500',
     flex: 1,
+  },
+  categoryDisplayPlaceholder: {
+    fontSize: 16,
   },
   editCategoryIcon: {
     padding: 4,

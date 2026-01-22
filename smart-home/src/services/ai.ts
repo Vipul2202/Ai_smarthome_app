@@ -367,3 +367,152 @@ function categorizeReceiptItem(itemName: string): string {
   // Similar logic to normalizeCategory but for receipt items
   return normalizeCategory(itemName);
 }
+
+export async function categorizeProductWithAI(productName: string): Promise<{
+  category: string;
+  confidence: number;
+  reasoning: string;
+}> {
+  // First try rule-based categorization for common items
+  const ruleBasedCategory = categorizeByRules(productName);
+  if (ruleBasedCategory.confidence > 0.8) {
+    return ruleBasedCategory;
+  }
+
+  // If OpenAI is not available, fall back to rule-based
+  if (!openai) {
+    console.log('OpenAI not available, using rule-based categorization');
+    return ruleBasedCategory;
+  }
+
+  try {
+    const prompt = `
+Categorize the following product into one of these categories:
+- fruits
+- vegetables  
+- dairy
+- meat
+- grains
+- beverages
+- snacks
+- condiments
+- frozen
+- other
+
+Product: "${productName}"
+
+Respond with JSON in this format:
+{
+  "category": "category_name",
+  "confidence": 0.95,
+  "reasoning": "Brief explanation of why this category was chosen"
+}
+
+Be confident in your categorization. Use "other" only if the product truly doesn't fit any category.
+`;
+
+    const response = await openai.chat.completions.create({
+      model: 'gpt-3.5-turbo',
+      messages: [
+        {
+          role: 'system',
+          content: 'You are an expert at categorizing grocery and household products. Always respond with valid JSON.',
+        },
+        {
+          role: 'user',
+          content: prompt,
+        },
+      ],
+      temperature: 0.1,
+      max_tokens: 200,
+    });
+
+    const content = response.choices[0]?.message?.content;
+    if (!content) {
+      throw new Error('No response from OpenAI');
+    }
+
+    const result = JSON.parse(content);
+    
+    return {
+      category: result.category || 'other',
+      confidence: result.confidence || 0.7,
+      reasoning: result.reasoning || 'AI categorization',
+    };
+
+  } catch (error) {
+    console.error('AI categorization failed, using rule-based fallback:', error);
+    return ruleBasedCategory;
+  }
+}
+
+function categorizeByRules(productName: string): {
+  category: string;
+  confidence: number;
+  reasoning: string;
+} {
+  const name = productName.toLowerCase().trim();
+  
+  // Check for snacks first (before vegetables) to catch things like "potato chips"
+  const snacks = ['chips', 'cookies', 'crackers', 'nuts', 'candy', 'chocolate', 'popcorn', 'pretzels', 'granola bar', 'trail mix', 'almonds', 'peanuts', 'cashews', 'walnuts', 'pistachios', 'pecans', 'hazelnuts', 'macadamia', 'sunflower seeds', 'pumpkin seeds', 'potato chips', 'corn chips', 'tortilla chips'];
+  if (snacks.some(s => name.includes(s))) {
+    return { category: 'snacks', confidence: 0.9, reasoning: 'Matched snack keywords' };
+  }
+  
+  // Fruits
+  const fruits = ['apple', 'banana', 'orange', 'grape', 'strawberry', 'mango', 'pineapple', 'watermelon', 'melon', 'kiwi', 'peach', 'pear', 'cherry', 'plum', 'avocado', 'lemon', 'lime', 'coconut', 'papaya', 'berries', 'blueberry', 'raspberry', 'blackberry', 'cranberry', 'pomegranate', 'guava', 'passion fruit', 'dragon fruit', 'lychee'];
+  if (fruits.some(fruit => name.includes(fruit))) {
+    return { category: 'fruits', confidence: 0.9, reasoning: 'Matched fruit keywords' };
+  }
+  
+  // Vegetables
+  const vegetables = ['tomato', 'onion', 'potato', 'carrot', 'broccoli', 'spinach', 'lettuce', 'cucumber', 'pepper', 'garlic', 'ginger', 'celery', 'cabbage', 'cauliflower', 'mushroom', 'corn', 'peas', 'beans', 'radish', 'beetroot', 'turnip', 'eggplant', 'zucchini', 'squash', 'okra', 'asparagus', 'artichoke', 'leek', 'scallion', 'chili', 'jalapeno', 'bell pepper', 'sweet potato'];
+  if (vegetables.some(veg => name.includes(veg))) {
+    return { category: 'vegetables', confidence: 0.9, reasoning: 'Matched vegetable keywords' };
+  }
+  
+  // Dairy
+  const dairy = ['milk', 'cheese', 'yogurt', 'yoghurt', 'butter', 'cream', 'ice cream', 'cottage cheese', 'mozzarella', 'cheddar', 'parmesan', 'ricotta', 'feta', 'goat cheese', 'swiss', 'brie', 'camembert', 'sour cream', 'whipped cream', 'half and half'];
+  if (dairy.some(d => name.includes(d))) {
+    return { category: 'dairy', confidence: 0.9, reasoning: 'Matched dairy keywords' };
+  }
+  
+  // Meat & Fish
+  const meat = ['chicken', 'beef', 'pork', 'lamb', 'fish', 'salmon', 'tuna', 'shrimp', 'crab', 'lobster', 'turkey', 'duck', 'bacon', 'ham', 'sausage', 'ground beef', 'steak', 'ribs', 'wings', 'thigh', 'breast', 'cod', 'tilapia', 'mahi', 'halibut', 'trout', 'sardines', 'anchovies', 'scallops', 'mussels', 'clams', 'oysters'];
+  if (meat.some(m => name.includes(m))) {
+    return { category: 'meat', confidence: 0.9, reasoning: 'Matched meat/fish keywords' };
+  }
+  
+  // Grains & Cereals
+  const grains = ['rice', 'bread', 'pasta', 'noodles', 'cereal', 'oats', 'quinoa', 'barley', 'wheat', 'flour', 'crackers', 'bagel', 'tortilla', 'pita', 'couscous', 'bulgur', 'millet', 'buckwheat', 'rye', 'cornmeal', 'polenta', 'grits', 'bran', 'granola'];
+  if (grains.some(g => name.includes(g))) {
+    return { category: 'grains', confidence: 0.9, reasoning: 'Matched grain/cereal keywords' };
+  }
+  
+  // Beverages
+  const beverages = ['water', 'juice', 'soda', 'coffee', 'tea', 'beer', 'wine', 'energy drink', 'sports drink', 'smoothie', 'cola', 'lemonade', 'milk', 'almond milk', 'soy milk', 'coconut milk', 'kombucha', 'sparkling water', 'tonic', 'ginger ale', 'root beer'];
+  if (beverages.some(b => name.includes(b))) {
+    return { category: 'beverages', confidence: 0.9, reasoning: 'Matched beverage keywords' };
+  }
+  
+  // Condiments & Spices
+  const condiments = ['salt', 'pepper', 'sugar', 'honey', 'vinegar', 'oil', 'sauce', 'ketchup', 'mustard', 'mayo', 'mayonnaise', 'spice', 'herb', 'seasoning', 'dressing', 'syrup', 'jam', 'jelly', 'peanut butter', 'almond butter', 'tahini', 'hummus', 'salsa', 'hot sauce', 'soy sauce', 'teriyaki', 'barbecue', 'ranch', 'italian', 'caesar'];
+  if (condiments.some(c => name.includes(c))) {
+    return { category: 'condiments', confidence: 0.9, reasoning: 'Matched condiment/spice keywords' };
+  }
+  
+  // Frozen
+  const frozen = ['frozen', 'ice', 'popsicle', 'frozen pizza', 'frozen vegetables', 'frozen fruit', 'ice cream', 'sorbet', 'gelato', 'frozen yogurt', 'frozen dinner', 'frozen meal'];
+  if (frozen.some(f => name.includes(f))) {
+    return { category: 'frozen', confidence: 0.9, reasoning: 'Matched frozen keywords' };
+  }
+  
+  // Check for common household items that might be "other"
+  const household = ['wallet', 'keys', 'phone', 'charger', 'battery', 'remote', 'book', 'magazine', 'pen', 'pencil', 'paper', 'notebook'];
+  if (household.some(h => name.includes(h))) {
+    return { category: 'other', confidence: 0.8, reasoning: 'Identified as household item, not food' };
+  }
+  
+  // Default to other with low confidence
+  return { category: 'other', confidence: 0.3, reasoning: 'No specific category match found - please verify category' };
+}

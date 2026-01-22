@@ -242,6 +242,12 @@ export const typeDefs: DocumentNode = gql`
     speechData: String
   }
 
+  type ProductCategorization {
+    category: String!
+    confidence: Float!
+    reasoning: String!
+  }
+
   # Shopping Types
   type ShoppingList {
     id: ID!
@@ -1045,6 +1051,9 @@ export const typeDefs: DocumentNode = gql`
 
     # Voice Control
     searchInventoryByVoice(kitchenId: ID!, searchTerm: String!): [InventorySearchResult!]!
+    
+    # AI Categorization
+    categorizeProduct(productName: String!): ProductCategorization!
   }
 
   # Mutations

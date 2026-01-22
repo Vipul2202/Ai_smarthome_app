@@ -1,6 +1,7 @@
 import { Context, requireKitchenAccess } from '../context';
 import { processVoiceIntent, askForMissingInfo } from '../../services/voiceIntentService';
 import { searchInventoryItems, findExactItem } from '../../services/inventorySearchService';
+import { categorizeProductWithAI } from '../../services/ai';
 
 export const inventoryResolvers = {
   Query: {
@@ -82,6 +83,20 @@ export const inventoryResolvers = {
         return [];
       }
     },
+
+    categorizeProduct: async (_: any, { productName }: any, context: Context) => {
+      try {
+        const result = await categorizeProductWithAI(productName);
+        return result;
+      } catch (error) {
+        console.error('Error categorizing product:', error);
+        return {
+          category: 'other',
+          confidence: 0.3,
+          reasoning: 'Categorization failed, defaulted to other',
+        };
+      }
+    },
   },
 
   Mutation: {
@@ -89,6 +104,15 @@ export const inventoryResolvers = {
       const { kitchenId, ...itemData } = input;
       
       await requireKitchenAccess(context, kitchenId, 'MEMBER');
+
+      // Validate required fields
+      if (!itemData.name || !itemData.name.trim()) {
+        throw new Error('Product name is required');
+      }
+
+      if (!itemData.category) {
+        throw new Error('Category is required');
+      }
 
       return context.prisma.inventoryItem.create({
         data: {

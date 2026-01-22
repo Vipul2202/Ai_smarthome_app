@@ -545,3 +545,13 @@ export const GET_AI_SCANS = gql`
     }
   }
 `;
+
+export const CATEGORIZE_PRODUCT = gql`
+  query CategorizeProduct($productName: String!) {
+    categorizeProduct(productName: $productName) {
+      category
+      confidence
+      reasoning
+    }
+  }
+`;

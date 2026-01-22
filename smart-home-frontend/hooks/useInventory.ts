@@ -314,9 +314,92 @@ export const useInventory = ({ kitchenId }: UseInventoryProps = {}) => {
   // Categories
   const categories = ['All', ...Array.from(new Set(inventoryItems.map(item => item.category)))];
 
+  const getItem = async (id: string): Promise<InventoryItem | null> => {
+    try {
+      const token = await AsyncStorage.getItem('authToken');
+      const apiUrl = process.env.EXPO_PUBLIC_API_URL || 'http://192.168.29.65:4000';
+
+      if (!token) {
+        console.error('No auth token');
+        return null;
+      }
+
+      const response = await fetch(`${apiUrl}/graphql`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          query: `
+            query GetInventoryItem($id: ID!) {
+              inventoryItem(id: $id) {
+                id
+                name
+                category
+                defaultUnit
+                location
+                totalQuantity
+                status
+                nextExpiry
+                createdAt
+                updatedAt
+                batches {
+                  id
+                  quantity
+                  unit
+                  status
+                }
+              }
+            }
+          `,
+          variables: { id },
+        }),
+      });
+
+      const data = await response.json();
+      
+      if (data.errors) {
+        console.error('GraphQL errors:', data.errors);
+        return null;
+      }
+
+      if (data.data?.inventoryItem) {
+        const item = data.data.inventoryItem;
+        return {
+          id: item.id,
+          name: item.name,
+          category: item.category ? item.category.toLowerCase() : null,
+          quantity: item.totalQuantity || 0,
+          unit: item.defaultUnit || 'pieces',
+          expiryDate: item.nextExpiry,
+          status: item.status?.toLowerCase() || 'good',
+          location: item.location?.toLowerCase(),
+          createdAt: item.createdAt,
+          updatedAt: item.updatedAt,
+        };
+      }
+
+      return null;
+    } catch (error) {
+      console.error('Error fetching item:', error);
+      return null;
+    }
+  };
+
   const addItem = async (itemData: Partial<InventoryItem>) => {
     try {
       setAddingItem(true);
+      
+      // Validate required fields
+      if (!itemData.name || !itemData.name.trim()) {
+        return { success: false, error: 'Product name is required' };
+      }
+      
+      if (!itemData.category) {
+        return { success: false, error: 'Category is required. Please wait for AI to categorize the product or select manually.' };
+      }
+      
       const token = await AsyncStorage.getItem('authToken');
       const apiUrl = process.env.EXPO_PUBLIC_API_URL || 'http://192.168.29.65:4000';
 
@@ -358,7 +441,7 @@ export const useInventory = ({ kitchenId }: UseInventoryProps = {}) => {
           variables: {
             input: {
               kitchenId: actualKitchenId,
-              name: itemData.name || '',
+              name: itemData.name.trim(),
               category: (itemData.category || 'other').toUpperCase(),
               defaultUnit: itemData.unit || 'pieces',
               location: 'PANTRY',
@@ -577,6 +660,7 @@ export const useInventory = ({ kitchenId }: UseInventoryProps = {}) => {
     addItem,
     updateItem,
     deleteItem,
+    getItem,
     searchItems,
     filterByCategory,
     sortItems,
