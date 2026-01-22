@@ -77,8 +77,39 @@ export default function VoiceControlScreen() {
   const [currentMissingInfoIndex, setCurrentMissingInfoIndex] = useState(0);
   const [pendingVoiceResult, setPendingVoiceResult] = useState<VoiceResult | null>(null);
   const [isGeneratingSpeech, setIsGeneratingSpeech] = useState(false);
+  const [processingMissingInfo, setProcessingMissingInfo] = useState(false);
+  const [speechInProgress, setSpeechInProgress] = useState(false);
+  const [autoRecordingTimeout, setAutoRecordingTimeout] = useState<ReturnType<typeof setTimeout> | null>(null);
   const inputRef = useRef<TextInput>(null);
   const scaleAnim = useRef(new Animated.Value(0)).current;
+
+  // Helper function to safely start auto-recording with timeout management
+  const scheduleAutoRecording = (delay: number = 2000) => {
+    // Clear any existing timeout first
+    if (autoRecordingTimeout) {
+      clearTimeout(autoRecordingTimeout);
+      setAutoRecordingTimeout(null);
+    }
+    
+    // Only schedule if we're still in missing info flow and not currently speaking
+    if (waitingForMissingInfo && !showConfirmation && !speechInProgress) {
+      console.log(`⏰ Scheduling auto-recording in ${delay}ms`);
+      const timeout = setTimeout(async () => {
+        if (recordingState !== 'recording' && waitingForMissingInfo && !showConfirmation && !speechInProgress) {
+          console.log('🎤 Auto-starting recording for missing info');
+          await startRecording();
+        }
+        setAutoRecordingTimeout(null);
+      }, delay);
+      setAutoRecordingTimeout(timeout);
+    } else {
+      console.log('🚫 Not scheduling auto-recording:', {
+        waitingForMissingInfo,
+        showConfirmation,
+        speechInProgress
+      });
+    }
+  };
 
   // Helper function to extract clean location from response
   const extractCleanLocation = (response: string): string | null => {
@@ -345,6 +376,12 @@ export default function VoiceControlScreen() {
   useEffect(() => {
     if (transcript) {
       if (waitingForMissingInfo) {
+        // Don't process responses while AI is still speaking
+        if (speechInProgress) {
+          console.log('🔇 Ignoring transcript while AI is speaking:', transcript);
+          return;
+        }
+        
         // Handle missing information response
         console.log('🔍 Debug - Processing missing info response:', {
           transcript,
@@ -358,7 +395,7 @@ export default function VoiceControlScreen() {
         processVoiceCommand(transcript);
       }
     }
-  }, [transcript, waitingForMissingInfo]);
+  }, [transcript, waitingForMissingInfo, speechInProgress]);
 
   // Show error if recording fails
   useEffect(() => {
@@ -372,16 +409,18 @@ export default function VoiceControlScreen() {
     if (recordingState === 'recording') {
       await stopRecording();
     } else if (recordingState === 'idle') {
-      // Clear previous state
-      clearTranscript();
-      setInputText('');
-      setVoiceResult(null);
-      setWaitingForMissingInfo(false);
-      setMissingInfoType([]);
-      setCurrentMissingInfoIndex(0);
-      setPendingVoiceResult(null);
-      setIsGeneratingSpeech(false);
-      setPlayingAudio(false);
+      // Only clear previous state if we're not in missing info flow
+      if (!waitingForMissingInfo) {
+        clearTranscript();
+        setInputText('');
+        setVoiceResult(null);
+        setWaitingForMissingInfo(false);
+        setMissingInfoType([]);
+        setCurrentMissingInfoIndex(0);
+        setPendingVoiceResult(null);
+        setIsGeneratingSpeech(false);
+        setPlayingAudio(false);
+      }
       
       await startRecording();
     }
@@ -455,34 +494,67 @@ export default function VoiceControlScreen() {
           missingInfo: result.missingInfo || [],
         };
 
-        // Validate required fields before showing confirmation
-        const requiredFields = ['quantity', 'category', 'location'];
-        const actualMissingInfo = requiredFields.filter(field => {
-          const value = voiceResultData.item[field as keyof typeof voiceResultData.item];
+        // Smart validation for required fields
+        const actualMissingInfo = [];
+        
+        console.log('🔍 Debug - Checking required fields:', {
+          name: voiceResultData.item.name,
+          quantity: voiceResultData.item.quantity,
+          category: voiceResultData.item.category,
+          location: voiceResultData.item.location
+        });
+        
+        // Always require quantity (but it should be extracted from initial command)
+        if (!voiceResultData.item.quantity || voiceResultData.item.quantity <= 0) {
+          actualMissingInfo.push('quantity');
+          console.log('❌ Missing: quantity');
+        }
+        
+        // Only require category if it's not automatically detectable
+        if (!voiceResultData.item.category || voiceResultData.item.category === '') {
+          // Try to auto-detect category based on product name
+          const productName = voiceResultData.item.name.toLowerCase();
+          let autoCategory = null;
           
-          // Check if value is missing or empty
-          if (!value || value === '' || value === null || value === undefined) {
-            return true;
+          // Common food categories
+          if (productName.includes('milk') || productName.includes('cheese') || productName.includes('yogurt') || productName.includes('butter')) {
+            autoCategory = 'dairy';
+          } else if (productName.includes('apple') || productName.includes('banana') || productName.includes('orange') || productName.includes('fruit')) {
+            autoCategory = 'fruits';
+          } else if (productName.includes('tomato') || productName.includes('onion') || productName.includes('potato') || productName.includes('vegetable')) {
+            autoCategory = 'vegetables';
+          } else if (productName.includes('chicken') || productName.includes('beef') || productName.includes('meat') || productName.includes('fish')) {
+            autoCategory = 'meat';
+          } else if (productName.includes('bread') || productName.includes('rice') || productName.includes('pasta') || productName.includes('cereal')) {
+            autoCategory = 'grains';
+          } else if (productName.includes('water') || productName.includes('juice') || productName.includes('soda') || productName.includes('coffee')) {
+            autoCategory = 'beverages';
+          } else if (productName.includes('chips') || productName.includes('cookies') || productName.includes('candy') || productName.includes('snack')) {
+            autoCategory = 'snacks';
           }
           
-          // More lenient validation - only reject obvious AI responses
-          const valueStr = String(value).toLowerCase();
-          const obviousAIPatterns = [
-            'what category would you like',
-            'which location would you prefer', 
-            'how many would you like',
-            'please specify the',
-            'could you tell me the',
-            'i need to know the'
-          ];
-          
-          // Only reject if it's clearly an AI question
-          const hasObviousAIPattern = obviousAIPatterns.some(pattern => valueStr.includes(pattern));
-          if (hasObviousAIPattern) {
-            return true;
+          if (autoCategory) {
+            voiceResultData.item.category = autoCategory;
+            console.log('🤖 Auto-detected category:', autoCategory, 'for product:', productName);
+          } else {
+            actualMissingInfo.push('category');
+            console.log('❌ Missing: category (could not auto-detect for:', productName, ')');
           }
-          
-          return false;
+        } else {
+          console.log('✅ Category already provided:', voiceResultData.item.category);
+        }
+        
+        // Only require location if not provided
+        if (!voiceResultData.item.location || voiceResultData.item.location === '') {
+          actualMissingInfo.push('location');
+          console.log('❌ Missing: location');
+        } else {
+          console.log('✅ Location already provided:', voiceResultData.item.location);
+        }
+        
+        console.log('🔍 Debug - Final missing info check:', {
+          actualMissingInfo,
+          willShowConfirmation: actualMissingInfo.length === 0
         });
 
         // Check for missing information
@@ -495,24 +567,32 @@ export default function VoiceControlScreen() {
           
           console.log('🔍 Debug - Starting missing info flow:', {
             originalProductName: voiceResultData.item.name,
-            missingFields: actualMissingInfo
+            missingFields: actualMissingInfo,
+            missingInfoLength: actualMissingInfo.length,
+            startingIndex: 0
           });
           
-          // Generate and play speech for missing information (only once)
-          if (!isGeneratingSpeech && !playingAudio) {
-            await generateMissingInfoSpeech(actualMissingInfo);
-          }
+          // Generate and play speech for missing information
+          console.log('🎤 Generating speech for missing info:', actualMissingInfo);
+          await generateMissingInfoSpeech(actualMissingInfo);
           
-          // Auto-continue recording without user clicking microphone
-          setTimeout(async () => {
-            if (recordingState !== 'recording') {
-              await startRecording();
-            }
-          }, 2000); // Wait 2 seconds after speech finishes, then auto-start recording
+          // Auto-continue recording without user clicking microphone - but only after speech finishes
+          // The scheduleAutoRecording will be called after the speech generation completes
         } else {
           // All required fields are complete, show confirmation directly
+          
+          // IMPORTANT: Stop all background processes first
+          setIsGeneratingSpeech(false);
+          setPlayingAudio(false);
+          setWaitingForMissingInfo(false);
+          setMissingInfoType([]);
+          setCurrentMissingInfoIndex(0);
+          setPendingVoiceResult(null);
+          
           setVoiceResult(voiceResultData);
           setShowConfirmation(true);
+          
+          console.log('🎉 Showing confirmation modal immediately - all info complete');
           
           // Stop any ongoing recording when showing confirmation
           if (recordingState === 'recording') {
@@ -607,6 +687,13 @@ export default function VoiceControlScreen() {
   };
 
   const handleCancel = () => {
+    // Clear any pending auto-recording timeout
+    if (autoRecordingTimeout) {
+      clearTimeout(autoRecordingTimeout);
+      setAutoRecordingTimeout(null);
+    }
+    
+    // Complete cleanup of all states
     setShowConfirmation(false);
     setVoiceResult(null);
     setInputText('');
@@ -615,6 +702,13 @@ export default function VoiceControlScreen() {
     setMissingInfoType([]);
     setCurrentMissingInfoIndex(0);
     setPendingVoiceResult(null);
+    setIsGeneratingSpeech(false);
+    setPlayingAudio(false);
+    setSpeechInProgress(false);
+    setProcessingCommand(false);
+    setProcessingMissingInfo(false);
+    
+    console.log('🧹 Complete cleanup - all voice control states reset');
   };
 
   const handleCloseSuccess = () => {
@@ -723,15 +817,28 @@ export default function VoiceControlScreen() {
 
   // Generate and play text-to-speech for missing information
   const generateMissingInfoSpeech = async (missingInfo: string[]) => {
+    console.log('🎤 generateMissingInfoSpeech called with:', missingInfo);
+    
     // Prevent multiple speech generations
     if (isGeneratingSpeech || playingAudio) {
       console.log('🔄 Speech already generating or playing, skipping...');
       return;
     }
 
+    console.log('🎤 Starting speech generation for missing info:', missingInfo);
+
     try {
       setIsGeneratingSpeech(true);
       setPlayingAudio(true);
+      setSpeechInProgress(true);
+      
+      // Clear any existing auto-recording timeouts first
+      if (autoRecordingTimeout) {
+        clearTimeout(autoRecordingTimeout);
+        setAutoRecordingTimeout(null);
+        console.log('🚫 Cleared existing auto-recording timeout before speech');
+      }
+      
       const token = await AsyncStorage.getItem('authToken');
       const apiUrl = process.env.EXPO_PUBLIC_API_URL || 'http://192.168.29.65:4000';
 
@@ -763,8 +870,19 @@ export default function VoiceControlScreen() {
       const result = data.data?.generateMissingInfoSpeech;
       if (result?.success && result.speechData) {
         setMissingInfoAudio(result.speechData);
-        // Play the audio
+        
+        // Play the audio and wait for it to finish
         await playAudioFromBase64(result.speechData);
+        
+        console.log('🎤 Speech audio finished playing');
+        
+        // Only auto-start recording if we're still in missing info flow
+        if (waitingForMissingInfo && !showConfirmation) {
+          console.log('🎤 Speech finished, scheduling auto-recording in 1 second');
+          scheduleAutoRecording(1000);
+        } else {
+          console.log('🚫 Not scheduling auto-recording - not in missing info flow');
+        }
       }
     } catch (error: any) {
       console.error('Error generating speech:', error);
@@ -772,6 +890,7 @@ export default function VoiceControlScreen() {
     } finally {
       setIsGeneratingSpeech(false);
       setPlayingAudio(false);
+      setSpeechInProgress(false);
     }
   };
 
@@ -783,10 +902,14 @@ export default function VoiceControlScreen() {
         { shouldPlay: true }
       );
       
-      sound.setOnPlaybackStatusUpdate((status) => {
-        if (status.isLoaded && status.didJustFinish) {
-          sound.unloadAsync();
-        }
+      // Wait for the audio to finish playing
+      return new Promise<void>((resolve) => {
+        sound.setOnPlaybackStatusUpdate((status) => {
+          if (status.isLoaded && status.didJustFinish) {
+            sound.unloadAsync();
+            resolve();
+          }
+        });
       });
     } catch (error) {
       console.error('Error playing audio:', error);
@@ -795,40 +918,184 @@ export default function VoiceControlScreen() {
 
   // Handle missing information response from user
   const handleMissingInfoResponse = async (response: string) => {
-    if (!pendingVoiceResult || !missingInfoType.length) return;
+    if (!pendingVoiceResult || !missingInfoType.length) {
+      console.log('⚠️ No pending voice result or missing info type, skipping response processing');
+      return;
+    }
+
+    // Prevent double processing of the same response
+    if (processingMissingInfo) {
+      console.log('🔄 Already processing missing info response, skipping duplicate');
+      return;
+    }
+
+    setProcessingMissingInfo(true);
+    console.log('🔄 Starting to process missing info response:', response);
+
+    // Filter out AI responses and system messages
+    const responseStr = response.toLowerCase().trim();
+    
+    // Skip if this looks like the original command being repeated
+    const originalCommand = pendingVoiceResult.item.name ? `add ${pendingVoiceResult.item.name}` : '';
+    if (responseStr.includes('add') && pendingVoiceResult.item.name && responseStr.includes(pendingVoiceResult.item.name.toLowerCase())) {
+      console.log('🔄 Skipping repeated original command:', response);
+      setProcessingMissingInfo(false);
+      // Continue recording for actual user response
+      scheduleAutoRecording(1000);
+      return;
+    }
+    
+    // Skip if this looks like an AI response or system message
+    const aiResponsePatterns = [
+      'some information is missing',
+      'please tell me the',
+      'what category would you like',
+      'which location would you prefer',
+      'i need to know',
+      'could you tell me',
+      'add chicken',
+      'add milk',
+      'add bread',
+      'add rice'
+    ];
+    
+    const isAIResponse = aiResponsePatterns.some(pattern => responseStr.includes(pattern));
+    if (isAIResponse) {
+      console.log('🤖 Skipping AI response or repeated command:', response);
+      setProcessingMissingInfo(false);
+      // Continue recording for actual user response
+      scheduleAutoRecording(1000);
+      return;
+    }
+
+    // Check if this is a simple, direct response (like "fridge", "dairy", etc.)
+    const isSimpleResponse = responseStr.length <= 15 && 
+                            !responseStr.includes('add') && 
+                            !responseStr.includes('chicken') && 
+                            !responseStr.includes('milk') &&
+                            !responseStr.includes('some information') &&
+                            !responseStr.includes('missing');
+    
+    // If it's not a simple response and contains the original product name, skip it
+    if (!isSimpleResponse && pendingVoiceResult.item.name && responseStr.includes(pendingVoiceResult.item.name.toLowerCase())) {
+      console.log('🔄 Skipping complex response containing original product name:', response);
+      setProcessingMissingInfo(false);
+      scheduleAutoRecording(1000);
+      return;
+    }
+    
+    if (isSimpleResponse) {
+      console.log('✅ Detected simple response, processing directly:', response);
+    }
 
     const currentMissingInfo = missingInfoType[currentMissingInfoIndex];
     const updatedResult = { ...pendingVoiceResult };
 
-    console.log('🔍 Debug - Before update:', {
+    console.log('🔍 Debug - Processing user response:', {
       productName: updatedResult.item.name,
       currentMissingInfo,
-      userResponse: response
+      userResponse: response,
+      isSimpleResponse,
+      responseLength: responseStr.length
     });
 
     // Parse the response based on missing info type
     if (currentMissingInfo === 'location') {
-      // Extract clean location from response
+      console.log('🔍 Processing location response:', responseStr);
+      
+      // Don't use responses that contain the original command or product name
+      if (responseStr.includes('add') || (pendingVoiceResult.item.name && responseStr.includes(pendingVoiceResult.item.name.toLowerCase()))) {
+        console.log('❌ Invalid location response - contains original command or product name');
+        setProcessingMissingInfo(false);
+        scheduleAutoRecording(1000);
+        return;
+      }
+      
+      // First try to extract clean location
       const cleanLocation = extractCleanLocation(response);
       if (cleanLocation) {
+        console.log('✅ Clean location extracted:', cleanLocation);
         updatedResult.item.location = cleanLocation;
       } else {
-        // If we can't extract a clean location, use the response as-is but clean it
-        const cleanResponse = response.trim().toLowerCase();
-        if (cleanResponse.length > 0 && !cleanResponse.includes('what') && !cleanResponse.includes('where')) {
-          updatedResult.item.location = cleanResponse;
+        // Common location keywords (more comprehensive)
+        const locationWords = ['fridge', 'freezer', 'pantry', 'cabinet', 'cupboard', 'kitchen', 'shelf', 'container', 'storage'];
+        const foundLocation = locationWords.find(loc => responseStr.includes(loc));
+        if (foundLocation) {
+          console.log('✅ Location keyword found:', foundLocation);
+          updatedResult.item.location = foundLocation;
+        } else {
+          // For very short responses, use them directly if they seem reasonable
+          if (responseStr.length <= 10 && responseStr.length >= 3 && !responseStr.includes('what') && !responseStr.includes('where')) {
+            console.log('✅ Using short response as location:', responseStr);
+            updatedResult.item.location = responseStr;
+          } else {
+            // Use first meaningful word as location
+            const words = responseStr.split(' ').filter(word => 
+              word.length > 2 && 
+              !['add', 'two', 'bottles', 'milk', 'the', 'in', 'to', 'at'].includes(word)
+            );
+            if (words.length > 0) {
+              console.log('✅ Using first meaningful word as location:', words[0]);
+              updatedResult.item.location = words[0];
+            } else {
+              // If we can't extract anything meaningful, ask again
+              console.log('❌ Could not extract location from:', response);
+              setProcessingMissingInfo(false);
+              scheduleAutoRecording(1000);
+              return;
+            }
+          }
         }
       }
     } else if (currentMissingInfo === 'category') {
+      console.log('🔍 Processing category response:', responseStr);
+      
+      // Don't use responses that contain the original command or product name
+      if (responseStr.includes('add') || (pendingVoiceResult.item.name && responseStr.includes(pendingVoiceResult.item.name.toLowerCase()))) {
+        console.log('❌ Invalid category response - contains original command or product name');
+        setProcessingMissingInfo(false);
+        scheduleAutoRecording(1000);
+        return;
+      }
+      
       // Extract clean category from response
       const cleanCategory = extractCleanCategory(response);
       if (cleanCategory) {
+        console.log('✅ Clean category extracted:', cleanCategory);
         updatedResult.item.category = cleanCategory;
       } else {
-        // If we can't extract a clean category, use the response as-is but clean it
-        const cleanResponse = response.trim().toLowerCase();
-        if (cleanResponse.length > 0 && !cleanResponse.includes('what') && !cleanResponse.includes('which')) {
-          updatedResult.item.category = cleanResponse;
+        // Map common category words
+        const categoryMap = {
+          'dairy': 'dairy',
+          'fruit': 'fruits',
+          'fruits': 'fruits',
+          'vegetable': 'vegetables',
+          'vegetables': 'vegetables',
+          'meat': 'meat',
+          'grain': 'grains',
+          'grains': 'grains',
+          'beverage': 'beverages',
+          'beverages': 'beverages',
+          'drink': 'beverages',
+          'snack': 'snacks',
+          'snacks': 'snacks',
+          'food': 'other',
+          'grocery': 'other'
+        };
+        
+        const foundCategory = Object.keys(categoryMap).find(cat => responseStr.includes(cat));
+        if (foundCategory) {
+          console.log('✅ Category keyword found:', foundCategory);
+          updatedResult.item.category = categoryMap[foundCategory as keyof typeof categoryMap];
+        } else {
+          // For very short responses, try to use them directly
+          if (responseStr.length <= 15 && responseStr.length >= 3) {
+            console.log('✅ Using short response as category:', responseStr);
+            updatedResult.item.category = responseStr;
+          } else {
+            console.log('⚠️ Using default category: other');
+            updatedResult.item.category = 'other';
+          }
         }
       }
     } else if (currentMissingInfo === 'quantity') {
@@ -839,16 +1106,6 @@ export default function VoiceControlScreen() {
       } else {
         updatedResult.item.quantity = 1; // default
       }
-      // Also try to extract unit if mentioned
-      const unitWords = response.toLowerCase().split(' ');
-      const commonUnits = ['pieces', 'kg', 'grams', 'liters', 'bottles', 'cans', 'boxes', 'packets'];
-      const foundUnit = unitWords.find(word => commonUnits.includes(word));
-      if (foundUnit && !updatedResult.item.unit) {
-        updatedResult.item.unit = foundUnit;
-      }
-    } else if (currentMissingInfo === 'unit') {
-      // Accept whatever user says as unit
-      updatedResult.item.unit = response.trim();
     }
 
     // IMPORTANT: Ensure product name is never overwritten
@@ -863,6 +1120,13 @@ export default function VoiceControlScreen() {
       quantity: updatedResult.item.quantity
     });
 
+    console.log('🔍 Debug - Missing info flow check:', {
+      currentMissingInfoIndex,
+      missingInfoTypeLength: missingInfoType.length,
+      missingInfoType,
+      shouldContinue: currentMissingInfoIndex < missingInfoType.length - 1
+    });
+
     // Move to next missing info or complete the flow
     if (currentMissingInfoIndex < missingInfoType.length - 1) {
       // Ask for next missing information
@@ -870,80 +1134,45 @@ export default function VoiceControlScreen() {
       setPendingVoiceResult(updatedResult);
       
       const nextMissingInfo = missingInfoType[currentMissingInfoIndex + 1];
-      // Only generate speech if not already generating
-      if (!isGeneratingSpeech && !playingAudio) {
-        await generateMissingInfoSpeech([nextMissingInfo]);
+      console.log('🎤 Generating speech for next missing info:', [nextMissingInfo]);
+      await generateMissingInfoSpeech([nextMissingInfo]);
+      
+      // Auto-recording will be scheduled after speech finishes in generateMissingInfoSpeech
+    } else {
+      // All missing info collected, show confirmation
+      console.log('✅ All missing info collected, showing confirmation modal');
+      
+      // Clear any pending auto-recording timeout
+      if (autoRecordingTimeout) {
+        clearTimeout(autoRecordingTimeout);
+        setAutoRecordingTimeout(null);
       }
       
-      // Auto-continue recording after speech finishes
-      setTimeout(async () => {
-        if (recordingState !== 'recording') {
-          await startRecording();
-        }
-      }, 2000); // Wait 2 seconds after speech, then auto-start recording
-    } else {
-      // All missing info collected, validate once more before showing confirmation
-      const requiredFields = ['quantity', 'category', 'location'];
-      const stillMissing = requiredFields.filter(field => {
-        const value = updatedResult.item[field as keyof typeof updatedResult.item];
-        
-        // Check if value is missing or empty
-        if (!value || value === '' || value === null || value === undefined) {
-          return true;
-        }
-        
-        // More lenient validation - only reject obvious AI responses
-        const valueStr = String(value).toLowerCase();
-        const obviousAIPatterns = [
-          'what category would you like',
-          'which location would you prefer',
-          'how many would you like',
-          'please specify the',
-          'could you tell me the',
-          'i need to know the'
-        ];
-        
-        // Only reject if it's clearly an AI question
-        const hasObviousAIPattern = obviousAIPatterns.some(pattern => valueStr.includes(pattern));
-        if (hasObviousAIPattern) {
-          return true;
-        }
-        
-        return false;
-      });
-
-      if (stillMissing.length > 0) {
-        // Still missing some info, continue the flow
-        setMissingInfoType(stillMissing);
-        setCurrentMissingInfoIndex(0);
-        setPendingVoiceResult(updatedResult);
-        
-        if (!isGeneratingSpeech && !playingAudio) {
-          await generateMissingInfoSpeech(stillMissing);
-        }
-        
-        setTimeout(async () => {
-          if (recordingState !== 'recording') {
-            await startRecording();
-          }
-        }, 2000);
-      } else {
-        // All required info collected, show confirmation
-        setWaitingForMissingInfo(false);
-        setMissingInfoType([]);
-        setCurrentMissingInfoIndex(0);
-        setPendingVoiceResult(null);
-        
-        // Stop recording when showing confirmation
-        if (recordingState === 'recording') {
-          await stopRecording();
-        }
-        
-        // Set final result and show confirmation
-        setVoiceResult(updatedResult);
-        setShowConfirmation(true);
+      // IMPORTANT: Stop all background processes first
+      setWaitingForMissingInfo(false);
+      setMissingInfoType([]);
+      setCurrentMissingInfoIndex(0);
+      setPendingVoiceResult(null);
+      setIsGeneratingSpeech(false);
+      setPlayingAudio(false);
+      
+      // Stop recording when showing confirmation
+      if (recordingState === 'recording') {
+        await stopRecording();
       }
+      
+      // Clear any pending timeouts or audio
+      clearTranscript();
+      
+      // Set final result and show confirmation
+      setVoiceResult(updatedResult);
+      setShowConfirmation(true);
+      
+      console.log('🎉 Confirmation modal should now be visible with all info complete');
     }
+    
+    // Reset processing flag
+    setProcessingMissingInfo(false);
   };
 
   const getMicColor = () => {
@@ -1053,9 +1282,10 @@ export default function VoiceControlScreen() {
                     'Listening...') :
                  recordingState === 'processing' ? 'Processing...' :
                  processingCommand ? 'Analyzing...' :
-                 playingAudio ? 'AI is asking...' :
+                 speechInProgress ? 'AI is speaking...' :
+                 playingAudio ? 'AI is asking... (mic will auto-start)' :
                  waitingForMissingInfo ? 
-                   `Please tell me the ${missingInfoType[currentMissingInfoIndex]}` :
+                   `Ready to hear your ${missingInfoType[currentMissingInfoIndex]}` :
                  'Tap to speak'}
               </Text>
 

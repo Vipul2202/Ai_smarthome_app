@@ -329,7 +329,7 @@ async function startServer() {
       fastify.log.info('Processing audio transcription...');
 
       // Import WhisperService dynamically
-      const { WhisperService } = await import('./services/whisper');
+      const { WhisperService } = await import('./services/whisper.js');
 
       // Transcribe audio
       const transcript = await WhisperService.transcribeAudioBuffer(
