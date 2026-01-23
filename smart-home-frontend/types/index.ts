@@ -15,6 +15,7 @@ export interface InventoryItem {
   category: string;
   quantity: number;
   unit: string;
+  location?: string; // Added location property
   expiryDate?: string;
   status: 'good' | 'warning' | 'critical';
   barcode?: string;

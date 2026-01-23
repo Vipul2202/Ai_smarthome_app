@@ -1,6 +1,4 @@
-import { PrismaClient } from '@prisma/client';
-
-const prisma = new PrismaClient();
+import { prisma } from '../lib/prisma';
 
 export interface SearchResult {
   id: string;
@@ -18,8 +16,10 @@ export async function searchInventoryItems(
   limit: number = 10
 ): Promise<SearchResult[]> {
   try {
-    // First try exact match
-    const exactMatch = await prisma.inventoryItem.findMany({
+    const searchLower = searchTerm.toLowerCase();
+    
+    // Search by name (exact match)
+    const exactNameMatch = await prisma.inventoryItem.findMany({
       where: {
         kitchenId,
         name: {
@@ -35,8 +35,8 @@ export async function searchInventoryItems(
       take: limit,
     });
 
-    // Then try partial match
-    const partialMatch = await prisma.inventoryItem.findMany({
+    // Search by name (partial match)
+    const partialNameMatch = await prisma.inventoryItem.findMany({
       where: {
         kitchenId,
         name: {
@@ -44,7 +44,7 @@ export async function searchInventoryItems(
           mode: 'insensitive',
         },
         NOT: {
-          id: { in: exactMatch.map(item => item.id) },
+          id: { in: exactNameMatch.map(item => item.id) },
         },
       },
       include: {
@@ -52,30 +52,107 @@ export async function searchInventoryItems(
           where: { status: 'ACTIVE' },
         },
       },
-      take: limit - exactMatch.length,
+      take: limit - exactNameMatch.length,
     });
 
-    // Combine and calculate similarity scores
-    const allResults = [...exactMatch, ...partialMatch];
+    // Search by category (case-insensitive string search)
+    const categoryMatch = await prisma.inventoryItem.findMany({
+      where: {
+        kitchenId,
+        category: {
+          contains: searchTerm,
+          mode: 'insensitive',
+        },
+        NOT: {
+          id: { in: [...exactNameMatch, ...partialNameMatch].map(item => item.id) },
+        },
+      },
+      include: {
+        batches: {
+          where: { status: 'ACTIVE' },
+        },
+      },
+      take: Math.max(1, limit - exactNameMatch.length - partialNameMatch.length),
+    });
+
+    // Search by location (enum field - need to match exact enum values)
+    const locationSearchUpper = searchTerm.toUpperCase();
+    const validLocations = ['PANTRY', 'FRIDGE', 'FREEZER', 'CONTAINER', 'CABINET'];
+    const matchingLocations = validLocations.filter(loc => 
+      loc.includes(locationSearchUpper) || locationSearchUpper.includes(loc)
+    );
+
+    let locationMatch: any[] = [];
+    if (matchingLocations.length > 0) {
+      locationMatch = await prisma.inventoryItem.findMany({
+        where: {
+          kitchenId,
+          location: {
+            in: matchingLocations as any[],
+          },
+          NOT: {
+            id: { in: [...exactNameMatch, ...partialNameMatch, ...categoryMatch].map(item => item.id) },
+          },
+        },
+        include: {
+          batches: {
+            where: { status: 'ACTIVE' },
+          },
+        },
+        take: Math.max(1, limit - exactNameMatch.length - partialNameMatch.length - categoryMatch.length),
+      });
+    }
+
+    // Combine all results
+    const allResults = [...exactNameMatch, ...partialNameMatch, ...categoryMatch, ...locationMatch];
     
     return allResults.map(item => {
       const totalQuantity = item.batches.reduce((sum, batch) => sum + batch.quantity, 0);
       
-      // Calculate similarity score
+      // Calculate similarity score based on what matched
       const nameLower = item.name.toLowerCase();
-      const searchLower = searchTerm.toLowerCase();
+      const categoryLower = item.category.toLowerCase();
+      const locationLower = item.location.toLowerCase();
       
       let similarity = 0;
+      let matchType = '';
+      
+      // Name matches (highest priority)
       if (nameLower === searchLower) {
         similarity = 1.0;
+        matchType = 'name-exact';
       } else if (nameLower.includes(searchLower)) {
-        similarity = 0.8;
+        similarity = 0.9;
+        matchType = 'name-partial';
       } else if (searchLower.includes(nameLower)) {
+        similarity = 0.8;
+        matchType = 'name-contains';
+      }
+      // Category matches (medium priority)
+      else if (categoryLower === searchLower) {
         similarity = 0.7;
-      } else {
-        // Simple character overlap calculation
-        const overlap = [...searchLower].filter(char => nameLower.includes(char)).length;
-        similarity = overlap / Math.max(searchLower.length, nameLower.length);
+        matchType = 'category-exact';
+      } else if (categoryLower.includes(searchLower)) {
+        similarity = 0.6;
+        matchType = 'category-partial';
+      }
+      // Location matches (lower priority)
+      else if (locationLower === searchLower) {
+        similarity = 0.5;
+        matchType = 'location-exact';
+      } else if (locationLower.includes(searchLower)) {
+        similarity = 0.4;
+        matchType = 'location-partial';
+      }
+      // Fallback: character overlap
+      else {
+        const nameOverlap = [...searchLower].filter(char => nameLower.includes(char)).length;
+        const categoryOverlap = [...searchLower].filter(char => categoryLower.includes(char)).length;
+        const locationOverlap = [...searchLower].filter(char => locationLower.includes(char)).length;
+        
+        const maxOverlap = Math.max(nameOverlap, categoryOverlap, locationOverlap);
+        similarity = maxOverlap / Math.max(searchLower.length, nameLower.length);
+        matchType = 'fuzzy';
       }
 
       return {

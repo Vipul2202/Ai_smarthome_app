@@ -16,6 +16,7 @@ import { StatusBar } from 'expo-status-bar';
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
+import { Audio } from 'expo-av';
 import { useInventory } from '@/hooks/useInventory';
 import { useLocalVoiceRecording } from '@/hooks/useLocalVoiceRecording';
 import { InventoryItem } from '@/types';
@@ -56,6 +57,7 @@ export default function InventoryScreen() {
   const [selectedItemForUpdate, setSelectedItemForUpdate] = useState<any>(null);
   const [updateQuantity, setUpdateQuantity] = useState('');
   const [isUpdating, setIsUpdating] = useState(false);
+  const [isSearchBarVoice, setIsSearchBarVoice] = useState(false);
   
   // Missing information flow states
   const [waitingForMissingInfo, setWaitingForMissingInfo] = useState(false);
@@ -96,11 +98,18 @@ export default function InventoryScreen() {
   const getFilteredItems = () => {
     let filtered = allItems;
 
-    // Apply search filter
+    // Apply search filter - search by name, category, and location
     if (searchQuery.trim()) {
-      filtered = filtered.filter(item =>
-        item.name.toLowerCase().includes(searchQuery.toLowerCase())
-      );
+      const query = searchQuery.trim().toLowerCase(); // Trim the query to remove extra spaces
+      filtered = filtered.filter(item => {
+        // Safely check each field with fallback to empty string
+        const nameMatch = (item.name || '').toLowerCase().includes(query);
+        const categoryMatch = (item.category || '').toLowerCase().includes(query);
+        const locationMatch = (item.location || '').toLowerCase().includes(query);
+        
+        // Return true if any field matches
+        return nameMatch || categoryMatch || locationMatch;
+      });
     }
 
     // Apply tab filter
@@ -189,22 +198,40 @@ export default function InventoryScreen() {
     return cat ? cat.color : '#6B7280';
   };
 
-  // Voice search functions
-  const handleVoiceSearch = async () => {
+  // Voice search functions with enhanced clean flow
+  const handleVoiceSearch = async (fromSearchBar: boolean = false) => {
     if (recordingState === 'recording') {
       await stopRecording();
     } else {
-      setShowVoiceSearch(true);
-      clearTranscript();
-      await startRecording();
+      setIsSearchBarVoice(fromSearchBar);
+      if (fromSearchBar) {
+        // For search bar voice search, don't show modal, just update search query
+        clearTranscript();
+        await startRecording();
+      } else {
+        // For dedicated voice search, show modal
+        setShowVoiceSearch(true);
+        clearTranscript();
+        await startRecording();
+      }
     }
   };
 
-  const processVoiceSearch = async (searchTerm: string) => {
+  const processVoiceSearch = async (searchTerm: string, fromSearchBar: boolean = false) => {
     if (!searchTerm.trim()) return;
 
     try {
+      console.log('🔍 Processing voice search for:', searchTerm, 'fromSearchBar:', fromSearchBar);
+      
+      if (fromSearchBar) {
+        // For search bar voice search, just update the search query
+        setSearchQuery(searchTerm);
+        return;
+      }
+      
+      // For dedicated voice search modal, proceed with full search
       setIsVoiceSearching(true);
+      
       const token = await AsyncStorage.getItem('authToken');
       const selectedHouseId = await AsyncStorage.getItem('selectedHouseId');
       const apiUrl = process.env.EXPO_PUBLIC_API_URL || 'http://192.168.29.65:4000';
@@ -260,11 +287,20 @@ export default function InventoryScreen() {
       }
 
       const results = data.data?.searchInventoryByVoice || [];
+      console.log('🔍 Search results:', results);
+      
       setVoiceSearchResults(results);
       
-      if (results.length === 0) {
-        Alert.alert('No Results', `No items found matching "${searchTerm}"`);
-      }
+      // Generate clean speech for search results (after showing modal)
+      setTimeout(async () => {
+        if (results.length === 0) {
+          await generateSearchResultsSpeech(`No items found for "${searchTerm}".`);
+        } else if (results.length === 1) {
+          await generateSearchResultsSpeech(`Found 1 item. Check your screen.`);
+        } else {
+          await generateSearchResultsSpeech(`Found ${results.length} items. Check your screen.`);
+        }
+      }, 1000); // Delay to ensure modal is shown first
 
     } catch (error: any) {
       console.error('Voice search error:', error);
@@ -275,6 +311,69 @@ export default function InventoryScreen() {
       }
     } finally {
       setIsVoiceSearching(false);
+    }
+  };
+
+  // Generate clean speech for search results using the new simple speech mutation
+  const generateSearchResultsSpeech = async (message: string) => {
+    try {
+      console.log('🎤 Generating search results speech:', message);
+      
+      const token = await AsyncStorage.getItem('authToken');
+      const apiUrl = process.env.EXPO_PUBLIC_API_URL || 'http://192.168.29.65:4000';
+
+      // Use the new simple speech mutation that doesn't add "some information missing" prefix
+      const response = await fetch(`${apiUrl}/graphql`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          query: `
+            mutation GenerateSimpleSpeech($text: String!) {
+              generateSimpleSpeech(text: $text) {
+                success
+                speechData
+              }
+            }
+          `,
+          variables: { text: message },
+        }),
+      });
+
+      const data = await response.json();
+      const result = data.data?.generateSimpleSpeech;
+      
+      if (result?.success && result.speechData) {
+        await playAudioFromBase64(result.speechData);
+        console.log('✅ Search results speech completed');
+      }
+    } catch (error) {
+      console.error('Error generating search results speech:', error);
+    }
+  };
+
+  // Play audio from base64 data
+  const playAudioFromBase64 = async (base64Data: string) => {
+    try {
+      const { Audio } = require('expo-av');
+      const { sound } = await Audio.Sound.createAsync(
+        { uri: `data:audio/mp3;base64,${base64Data}` },
+        { shouldPlay: true }
+      );
+      
+      // Wait for the audio to finish playing
+      return new Promise<void>((resolve) => {
+        sound.setOnPlaybackStatusUpdate((status: any) => {
+          if (status.isLoaded && status.didJustFinish) {
+            sound.unloadAsync();
+            resolve();
+          }
+        });
+      });
+    } catch (error) {
+      console.error('Error playing audio:', error);
     }
   };
 
@@ -364,10 +463,26 @@ export default function InventoryScreen() {
 
   // Handle voice transcript
   React.useEffect(() => {
-    if (transcript && showVoiceSearch) {
-      processVoiceSearch(transcript);
+    if (transcript) {
+      console.log('🎤 Transcript received:', transcript, 'isSearchBarVoice:', isSearchBarVoice, 'showVoiceSearch:', showVoiceSearch);
+      
+      if (isSearchBarVoice) {
+        // For search bar voice, clean the transcript (remove punctuation, trim, lowercase)
+        const cleanedTranscript = transcript
+          .trim()
+          .toLowerCase()
+          .replace(/[.,!?;:]/g, ''); // Remove common punctuation
+        console.log('🔍 Updating search query from voice:', `"${transcript}" -> "${cleanedTranscript}"`);
+        setSearchQuery(cleanedTranscript);
+        setIsSearchBarVoice(false); // Reset flag
+      } else if (showVoiceSearch) {
+        // For dedicated voice search modal, process the search (also clean it)
+        const cleanedTranscript = transcript.trim().replace(/[.,!?;:]/g, '');
+        console.log('🔍 Processing dedicated voice search:', `"${transcript}" -> "${cleanedTranscript}"`);
+        processVoiceSearch(cleanedTranscript, false);
+      }
     }
-  }, [transcript, showVoiceSearch]);
+  }, [transcript, showVoiceSearch, isSearchBarVoice]);
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }}>
@@ -439,7 +554,7 @@ export default function InventoryScreen() {
             <TextInput
               value={searchQuery}
               onChangeText={setSearchQuery}
-              placeholder="Search items..."
+              placeholder="Search by name, category, or location..."
               placeholderTextColor={colors.textSecondary}
               style={{
                 flex: 1,
@@ -455,7 +570,7 @@ export default function InventoryScreen() {
               </TouchableOpacity>
             )}
             <TouchableOpacity
-              onPress={handleVoiceSearch}
+              onPress={() => handleVoiceSearch(true)}
               style={{
                 backgroundColor: recordingState === 'recording' ? '#EF4444' : '#10B981',
                 width: 36,
@@ -1193,7 +1308,7 @@ export default function InventoryScreen() {
                       padding: 16,
                       marginBottom: 12,
                       borderWidth: 1,
-                      borderColor: colors.border,
+                      borderColor: item.similarity > 0.8 ? '#10B981' : colors.border,
                     }}
                   >
                     <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
@@ -1219,17 +1334,75 @@ export default function InventoryScreen() {
                         <Text style={{ fontSize: 14, color: colors.textSecondary }}>
                           {item.totalQuantity} {item.defaultUnit} • {item.category} • {item.location}
                         </Text>
+                        {/* Show match type indicator */}
+                        <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}>
+                          <View style={{
+                            backgroundColor: item.similarity > 0.8 ? '#10B981' : 
+                                           item.similarity > 0.6 ? '#F59E0B' : '#8B5CF6',
+                            borderRadius: 8,
+                            paddingHorizontal: 6,
+                            paddingVertical: 2,
+                            marginRight: 6,
+                          }}>
+                            <Text style={{ fontSize: 10, color: 'white', fontWeight: '600' }}>
+                              {item.similarity > 0.8 ? 'Name Match' :
+                               item.similarity > 0.6 ? 'Category Match' :
+                               item.similarity > 0.4 ? 'Location Match' : 'Fuzzy Match'}
+                            </Text>
+                          </View>
+                        </View>
                       </View>
                       <View style={{ alignItems: 'flex-end' }}>
-                        <Text style={{ fontSize: 12, color: '#10B981', fontWeight: '600' }}>
-                          {Math.round(item.similarity * 100)}% match
-                        </Text>
+                        <View style={{
+                          backgroundColor: item.similarity > 0.8 ? '#10B981' : '#8B5CF6',
+                          borderRadius: 8,
+                          paddingHorizontal: 8,
+                          paddingVertical: 4,
+                          marginBottom: 4,
+                        }}>
+                          <Text style={{ fontSize: 12, color: 'white', fontWeight: '600' }}>
+                            {Math.round(item.similarity * 100)}% match
+                          </Text>
+                        </View>
                         <Ionicons name="chevron-forward" size={16} color={colors.textSecondary} />
                       </View>
                     </View>
                   </TouchableOpacity>
                 ))}
               </ScrollView>
+            )}
+
+            {/* No Results */}
+            {voiceSearchResults.length === 0 && transcript && !isVoiceSearching && recordingState === 'idle' && (
+              <View style={{ alignItems: 'center', padding: 20 }}>
+                <Ionicons name="search-outline" size={48} color={colors.textSecondary} />
+                <Text style={{ 
+                  textAlign: 'center', 
+                  color: colors.textSecondary, 
+                  fontSize: 16,
+                  marginTop: 12,
+                  marginBottom: 16 
+                }}>
+                  No items found for "{transcript}"
+                </Text>
+                <TouchableOpacity
+                  onPress={() => {
+                    setShowVoiceSearch(false);
+                    router.push('/voice-control');
+                  }}
+                  style={{
+                    backgroundColor: '#10B981',
+                    borderRadius: 12,
+                    paddingVertical: 12,
+                    paddingHorizontal: 20,
+                    alignItems: 'center',
+                  }}
+                >
+                  <Text style={{ fontSize: 14, fontWeight: '600', color: 'white' }}>
+                    Add "{transcript}" to Inventory
+                  </Text>
+                </TouchableOpacity>
+              </View>
             )}
 
             {/* Action Button */}

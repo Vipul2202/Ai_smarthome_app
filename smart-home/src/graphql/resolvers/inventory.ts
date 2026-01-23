@@ -1,5 +1,5 @@
 import { Context, requireKitchenAccess } from '../context';
-import { processVoiceIntent, askForMissingInfo } from '../../services/voiceIntentService';
+import { processVoiceIntent, askForMissingInfo, generateSimpleSpeech } from '../../services/voiceIntentService';
 import { searchInventoryItems, findExactItem } from '../../services/inventorySearchService';
 import { categorizeProductWithAI } from '../../services/ai';
 
@@ -363,6 +363,22 @@ export const inventoryResolvers = {
         };
       } catch (error) {
         console.error('Error generating speech:', error);
+        return {
+          success: false,
+          speechData: null,
+        };
+      }
+    },
+
+    generateSimpleSpeech: async (_: any, { text }: any, context: Context) => {
+      try {
+        const speechBase64 = await generateSimpleSpeech(text);
+        return {
+          success: true,
+          speechData: speechBase64,
+        };
+      } catch (error) {
+        console.error('Error generating simple speech:', error);
         return {
           success: false,
           speechData: null,

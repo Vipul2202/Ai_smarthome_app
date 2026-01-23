@@ -1147,6 +1147,7 @@ export const typeDefs: DocumentNode = gql`
     processVoiceIntent(transcript: String!): VoiceIntent!
     updateInventoryByVoice(kitchenId: ID!, itemName: String!, quantity: Float!): VoiceUpdateResult!
     generateMissingInfoSpeech(missingInfo: [String!]!): SpeechGenerationResult!
+    generateSimpleSpeech(text: String!): SpeechGenerationResult!
 
     # Meal Planning
     createMealPlan(input: CreateMealPlanInput!): MealPlan!

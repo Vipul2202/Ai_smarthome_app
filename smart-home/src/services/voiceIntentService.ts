@@ -180,3 +180,24 @@ export async function askForMissingInfo(missingInfo: string[]): Promise<string> 
     return '';
   }
 }
+
+export async function generateSimpleSpeech(text: string): Promise<string> {
+  try {
+    console.log('🎤 Generating simple speech for:', text);
+    
+    const response = await openai.audio.speech.create({
+      model: 'tts-1',
+      voice: 'nova',
+      input: text,
+      speed: 0.7, // Slower and clearer speech
+    });
+
+    // Convert to base64 for frontend
+    const buffer = Buffer.from(await response.arrayBuffer());
+    return buffer.toString('base64');
+
+  } catch (error) {
+    console.error('Error generating simple speech:', error);
+    return '';
+  }
+}
