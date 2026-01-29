@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -49,6 +49,10 @@ export default function InventoryScreen() {
   const [editCategory, setEditCategory] = useState('');
   const [editUnit, setEditUnit] = useState('');
   
+  // Search state
+  const [searchResults, setSearchResults] = useState<any[]>([]);
+  const [isSearching, setIsSearching] = useState(false);
+  
   // Voice search states
   const [showVoiceSearch, setShowVoiceSearch] = useState(false);
   const [voiceSearchResults, setVoiceSearchResults] = useState<any[]>([]);
@@ -64,6 +68,86 @@ export default function InventoryScreen() {
   const [missingInfoType, setMissingInfoType] = useState<string[]>([]);
   const [pendingVoiceResult, setPendingVoiceResult] = useState<any>(null);
   const [currentMissingInfoIndex, setCurrentMissingInfoIndex] = useState(0);
+
+  // Backend search function
+  const performBackendSearch = async (query: string) => {
+    if (!query.trim()) {
+      setSearchResults([]);
+      return;
+    }
+
+    try {
+      setIsSearching(true);
+      const token = await AsyncStorage.getItem('authToken');
+      const apiUrl = process.env.EXPO_PUBLIC_API_URL || 'http://192.168.29.65:4000';
+      const selectedHouseId = await AsyncStorage.getItem('selectedHouseId');
+
+      if (!token || !selectedHouseId) {
+        return;
+      }
+
+      const cachedKitchenKey = `kitchen_${selectedHouseId}`;
+      const kitchenId = await AsyncStorage.getItem(cachedKitchenKey);
+
+      if (!kitchenId) {
+        return;
+      }
+
+      const response = await fetch(`${apiUrl}/graphql`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          query: `
+            query SearchInventoryByVoice($kitchenId: ID!, $searchTerm: String!) {
+              searchInventoryByVoice(kitchenId: $kitchenId, searchTerm: $searchTerm) {
+                id
+                name
+                category
+                totalQuantity
+                defaultUnit
+                location
+                similarity
+              }
+            }
+          `,
+          variables: { kitchenId, searchTerm: query },
+        }),
+      });
+
+      const data = await response.json();
+
+      if (data.errors) {
+        console.error('Search errors:', data.errors);
+        setSearchResults([]);
+        return;
+      }
+
+      const results = data.data?.searchInventoryByVoice || [];
+      console.log('🔍 Backend search results for "' + query + '":', results);
+      setSearchResults(results);
+    } catch (error) {
+      console.error('Error performing backend search:', error);
+      setSearchResults([]);
+    } finally {
+      setIsSearching(false);
+    }
+  };
+
+  // Debounced search effect
+  useEffect(() => {
+    const timeoutId = setTimeout(() => {
+      if (searchQuery.trim()) {
+        performBackendSearch(searchQuery);
+      } else {
+        setSearchResults([]);
+      }
+    }, 500); // 500ms debounce
+
+    return () => clearTimeout(timeoutId);
+  }, [searchQuery]);
 
   const {
     recordingState,
@@ -98,18 +182,31 @@ export default function InventoryScreen() {
   const getFilteredItems = () => {
     let filtered = allItems;
 
-    // Apply search filter - search by name, category, and location
+    // Filter items - use backend search results if available, otherwise local filter
     if (searchQuery.trim()) {
-      const query = searchQuery.trim().toLowerCase(); // Trim the query to remove extra spaces
-      filtered = filtered.filter(item => {
-        // Safely check each field with fallback to empty string
-        const nameMatch = (item.name || '').toLowerCase().includes(query);
-        const categoryMatch = (item.category || '').toLowerCase().includes(query);
-        const locationMatch = (item.location || '').toLowerCase().includes(query);
-        
-        // Return true if any field matches
-        return nameMatch || categoryMatch || locationMatch;
-      });
+      if (searchResults.length > 0) {
+        // Use backend search results
+        filtered = searchResults.map(result => ({
+          id: result.id,
+          name: result.name,
+          category: result.category?.toLowerCase() || 'other',
+          quantity: result.totalQuantity || 0,
+          unit: result.defaultUnit || 'pieces',
+          location: result.location?.toLowerCase() || 'pantry',
+          status: 'good', // Default status
+          similarity: result.similarity,
+        }));
+      } else if (!isSearching) {
+        // Fallback to local search if backend search returns no results
+        const query = searchQuery.trim().toLowerCase();
+        filtered = filtered.filter(item => {
+          const nameMatch = (item.name || '').toLowerCase().includes(query);
+          const categoryMatch = (item.category || '').toLowerCase().includes(query);
+          const locationMatch = (item.location || '').toLowerCase().includes(query);
+          
+          return nameMatch || categoryMatch || locationMatch;
+        });
+      }
     }
 
     // Apply tab filter

@@ -26,23 +26,25 @@ Analyze this voice command and extract the intent and item details:
 Determine:
 1. Intent: ADD (add new item), UPDATE (update existing item), SEARCH (find item), DELETE (remove item)
 2. Item name (required)
-3. Quantity (if mentioned)
+3. Quantity (MUST be a single number, not a range. If range like "1 to 5", use the first number)
 4. Unit (pieces, kg, bottles, etc.)
 5. Category (accept whatever user says - no suggestions)
 6. Location (accept whatever user says - no suggestions)
 7. Missing information that should be asked
 
-Examples:
-- "Add 2 bottles of milk" → ADD, milk, 2, bottles, null, null (missing category, location)
-- "Add milk to my fridge in dairy section" → ADD, milk, null, null, dairy section, my fridge
-- "Add tomatoes" → ADD, tomatoes, null, null, null, null (missing quantity, unit, category, location)
+IMPORTANT QUANTITY RULES:
+- Quantity MUST be a single number (e.g., 2, 5, 10)
+- If user says "1 to 5" or "2-3", use the first number (1 or 2)
+- If user says "a few", use 3
+- If user says "some", use 2
+- If user says "many", use 5
+- If no quantity mentioned, set to null
 
-IMPORTANT: 
-- Accept ANY category name user provides (don't limit to predefined categories)
-- Accept ANY location name user provides (don't limit to predefined locations)
-- If user doesn't specify category or location, mark as missing info
-- Don't suggest options, just ask for missing information
-- When asking for missing info, ask simple questions without giving examples
+Examples:
+- "Add 2 bottles of milk" → ADD, milk, 2, bottles, null, null
+- "Add 1 to 5 tomatoes" → ADD, tomatoes, 1, pieces, null, null
+- "Add some apples" → ADD, apples, 2, pieces, null, null
+- "Add milk to my fridge" → ADD, milk, null, null, null, my fridge
 
 Respond in JSON format:
 {
@@ -64,7 +66,7 @@ Respond in JSON format:
       messages: [
         {
           role: 'system',
-          content: 'You are a smart home inventory assistant. Extract intent and item details from voice commands. Always respond with valid JSON.'
+          content: 'You are a smart home inventory assistant. Extract intent and item details from voice commands. Always respond with valid JSON. Quantity must be a single number, never a range or text.'
         },
         {
           role: 'user',
@@ -83,12 +85,25 @@ Respond in JSON format:
     // Parse the JSON response
     const result = JSON.parse(content);
     
+    // Additional validation for quantity
+    let quantity = result.item?.quantity;
+    if (quantity !== null && quantity !== undefined) {
+      // Ensure quantity is a valid number
+      if (typeof quantity === 'string') {
+        // Try to extract first number from string
+        const numberMatch = quantity.match(/(\d+(?:\.\d+)?)/);
+        quantity = numberMatch ? parseFloat(numberMatch[1]) : null;
+      } else if (typeof quantity === 'number' && !isFinite(quantity)) {
+        quantity = null;
+      }
+    }
+    
     // Validate and normalize the response
     return {
       intent: result.intent || 'UNKNOWN',
       item: {
         name: result.item?.name || '',
-        quantity: result.item?.quantity || null,
+        quantity: quantity,
         unit: result.item?.unit || null,
         category: result.item?.category || null,
         location: result.item?.location || null,
@@ -100,7 +115,7 @@ Respond in JSON format:
   } catch (error) {
     console.error('Error processing voice intent:', error);
     
-    // Fallback: simple keyword matching
+    // Fallback: simple keyword matching with quantity extraction
     const lowerTranscript = transcript.toLowerCase();
     let intent: VoiceIntent['intent'] = 'UNKNOWN';
     
@@ -114,11 +129,18 @@ Respond in JSON format:
       intent = 'DELETE';
     }
 
+    // Try to extract quantity from transcript
+    let quantity = null;
+    const numberMatch = transcript.match(/(\d+(?:\.\d+)?)/);
+    if (numberMatch) {
+      quantity = parseFloat(numberMatch[1]);
+    }
+
     return {
       intent,
       item: {
         name: transcript,
-        quantity: null,
+        quantity: quantity,
         unit: null,
         category: null,
         location: null,
