@@ -283,7 +283,7 @@ export default function VoiceControlScreen() {
         throw new Error('Failed to get or create kitchen');
       }
 
-      // Create inventory item
+      // Smart add inventory item (will update existing or create new)
       const response = await fetch(`${apiUrl}/graphql`, {
         method: 'POST',
         headers: {
@@ -292,12 +292,19 @@ export default function VoiceControlScreen() {
         },
         body: JSON.stringify({
           query: `
-            mutation CreateInventoryItem($input: CreateInventoryItemInput!) {
-              createInventoryItem(input: $input) {
-                id
-                name
-                category
-                defaultUnit
+            mutation SmartAddInventoryItem($input: SmartAddInventoryItemInput!) {
+              smartAddInventoryItem(input: $input) {
+                success
+                action
+                message
+                item {
+                  id
+                  name
+                  category
+                  defaultUnit
+                  location
+                }
+                addedQuantity
                 totalQuantity
               }
             }
@@ -306,11 +313,10 @@ export default function VoiceControlScreen() {
             input: {
               kitchenId: kitchenId,
               name: itemData.name,
-              category: (itemData.category || 'OTHER').toUpperCase(),
-              defaultUnit: itemData.unit || 'pieces',
-              location: itemData.location ? itemData.location.toUpperCase() : 'PANTRY',
-              threshold: 2,
-              tags: [],
+              quantity: itemData.quantity,
+              unit: itemData.unit || 'pieces',
+              category: itemData.category || 'other',
+              location: itemData.location || 'pantry',
             },
           },
         }),
@@ -322,38 +328,19 @@ export default function VoiceControlScreen() {
         throw new Error(data.errors[0]?.message || 'Failed to add item');
       }
 
-      // Add batch for quantity
-      const itemId = data.data?.createInventoryItem?.id;
-      if (itemId && itemData.quantity) {
-        await fetch(`${apiUrl}/graphql`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${token}`,
-          },
-          body: JSON.stringify({
-            query: `
-              mutation CreateInventoryBatch($input: CreateInventoryBatchInput!) {
-                createInventoryBatch(input: $input) {
-                  id
-                  quantity
-                  unit
-                }
-              }
-            `,
-            variables: {
-              input: {
-                itemId: itemId,
-                quantity: itemData.quantity,
-                unit: itemData.unit || 'pieces',
-                purchaseDate: new Date().toISOString(),
-              },
-            },
-          }),
-        });
+      const result = data.data?.smartAddInventoryItem;
+      if (result?.success) {
+        return { 
+          success: true, 
+          data: result.item,
+          action: result.action,
+          message: result.message,
+          addedQuantity: result.addedQuantity,
+          totalQuantity: result.totalQuantity
+        };
+      } else {
+        throw new Error('Failed to add item to inventory');
       }
-
-      return { success: true, data: data.data?.createInventoryItem };
     } catch (error: any) {
       console.error('Error adding item:', error);
       return { success: false, error: error.message };
@@ -771,7 +758,9 @@ export default function VoiceControlScreen() {
       });
 
       if (result.success) {
-        setSuccessMessage(`${voiceResult.item.name} added to your inventory`);
+        // Use the smart message from backend that indicates if item was created or updated
+        const smartMessage = result.message || `${voiceResult.item.name} added to your inventory`;
+        setSuccessMessage(smartMessage);
         setShowConfirmation(false);
         setShowSuccessModal(true);
         

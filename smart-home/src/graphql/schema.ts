@@ -713,6 +713,24 @@ export const typeDefs: DocumentNode = gql`
     location: StorageLocation
   }
 
+  input SmartAddInventoryItemInput {
+    kitchenId: ID!
+    name: String!
+    quantity: Float!
+    unit: String
+    category: String
+    location: String
+  }
+
+  type SmartAddResult {
+    success: Boolean!
+    action: String! # "CREATED" or "UPDATED"
+    message: String!
+    item: InventoryItem!
+    addedQuantity: Float!
+    totalQuantity: Float!
+  }
+
   input CreateShoppingListInput {
     kitchenId: ID!
     type: ShoppingListType!
@@ -1096,6 +1114,9 @@ export const typeDefs: DocumentNode = gql`
     createInventoryBatch(input: CreateInventoryBatchInput!): InventoryBatch!
     updateInventoryBatch(id: ID!, quantity: Float, expiryDate: DateTime): InventoryBatch!
     deleteInventoryBatch(id: ID!): Boolean!
+
+    # Smart Add - Adds to existing item if found, creates new if not
+    smartAddInventoryItem(input: SmartAddInventoryItemInput!): SmartAddResult!
 
     # Shopping
     createShoppingList(input: CreateShoppingListInput!): ShoppingList!

@@ -219,6 +219,102 @@ export const inventoryResolvers = {
       return true;
     },
 
+    smartAddInventoryItem: async (_: any, { input }: any, context: Context) => {
+      const { kitchenId, name, quantity, unit, category, location } = input;
+      
+      await requireKitchenAccess(context, kitchenId, 'MEMBER');
+
+      // Validate required fields
+      if (!name || !name.trim()) {
+        throw new Error('Product name is required');
+      }
+
+      if (!quantity || quantity <= 0) {
+        throw new Error('Quantity must be greater than 0');
+      }
+
+      // Normalize inputs for comparison
+      const normalizedName = name.trim().toLowerCase();
+      const normalizedLocation = location ? location.toUpperCase() : 'PANTRY';
+      const normalizedCategory = category ? category.toUpperCase() : 'OTHER';
+      const normalizedUnit = unit || 'pieces';
+
+      // Check if an item with the same name and location already exists
+      const existingItem = await context.prisma.inventoryItem.findFirst({
+        where: {
+          kitchenId,
+          name: {
+            equals: normalizedName,
+            mode: 'insensitive'
+          },
+          location: normalizedLocation,
+        },
+        include: {
+          batches: {
+            where: { status: 'ACTIVE' },
+          },
+        },
+      });
+
+      if (existingItem) {
+        // Item exists, add to existing quantity by creating a new batch
+        const newBatch = await context.prisma.inventoryBatch.create({
+          data: {
+            itemId: existingItem.id,
+            quantity: quantity,
+            unit: normalizedUnit,
+            purchaseDate: new Date(),
+            status: 'ACTIVE',
+          },
+        });
+
+        // Calculate new total quantity
+        const totalQuantity = existingItem.batches.reduce((sum: number, batch: any) => sum + batch.quantity, 0) + quantity;
+
+        return {
+          success: true,
+          action: 'UPDATED',
+          message: `Added ${quantity} ${normalizedUnit} to existing "${existingItem.name}". Total quantity is now ${totalQuantity} ${normalizedUnit}.`,
+          item: existingItem,
+          addedQuantity: quantity,
+          totalQuantity: totalQuantity,
+        };
+      } else {
+        // Item doesn't exist, create new item
+        const newItem = await context.prisma.inventoryItem.create({
+          data: {
+            kitchenId,
+            name: normalizedName,
+            category: normalizedCategory,
+            defaultUnit: normalizedUnit,
+            location: normalizedLocation,
+            threshold: 2,
+            tags: [],
+          },
+        });
+
+        // Create initial batch
+        await context.prisma.inventoryBatch.create({
+          data: {
+            itemId: newItem.id,
+            quantity: quantity,
+            unit: normalizedUnit,
+            purchaseDate: new Date(),
+            status: 'ACTIVE',
+          },
+        });
+
+        return {
+          success: true,
+          action: 'CREATED',
+          message: `Created new item "${newItem.name}" with ${quantity} ${normalizedUnit}.`,
+          item: newItem,
+          addedQuantity: quantity,
+          totalQuantity: quantity,
+        };
+      }
+    },
+
     bulkCreateInventoryItems: async (_: any, { items }: any, context: Context) => {
       // Validate all items belong to kitchens the user has access to
       const kitchenIds = [...new Set(items.map((item: any) => item.kitchenId))];
