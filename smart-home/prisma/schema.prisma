@@ -153,8 +153,11 @@ model InventoryItem {
   @@index([kitchenId])
   @@index([name])
   @@index([category])
+  @@index([location])
   @@index([kitchenId, name])
   @@index([kitchenId, category])
+  @@index([kitchenId, location])
+  @@index([kitchenId, name, category])
 }
 
 model InventoryBatch {
@@ -170,6 +173,12 @@ model InventoryBatch {
   createdAt     DateTime      @default(now())
   updatedAt     DateTime      @updatedAt
   item          InventoryItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+
+  @@index([itemId])
+  @@index([status])
+  @@index([expiryDate])
+  @@index([itemId, status])
+  @@index([status, expiryDate])
 }
 
 model ShoppingList {

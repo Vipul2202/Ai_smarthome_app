@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { InventoryItem } from '@/types';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
@@ -6,16 +6,141 @@ interface UseInventoryProps {
   kitchenId?: string;
 }
 
+interface FastSearchResult {
+  items: InventoryItem[];
+  hasMore: boolean;
+  total: number;
+}
+
 export const useInventory = ({ kitchenId }: UseInventoryProps = {}) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('All');
   const [sortBy, setSortBy] = useState<'name' | 'expiry' | 'quantity'>('name');
   const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([]);
+  const [searchResults, setSearchResults] = useState<InventoryItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [addingItem, setAddingItem] = useState(false);
   const [updatingItem, setUpdatingItem] = useState(false);
   const [deletingItem, setDeletingItem] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [hasMore, setHasMore] = useState(false);
+  const [searchOffset, setSearchOffset] = useState(0);
+
+  // Debounced search function
+  const performFastSearch = useCallback(async (query: string, offset: number = 0) => {
+    try {
+      const token = await AsyncStorage.getItem('authToken');
+      const apiUrl = process.env.EXPO_PUBLIC_API_URL || 'http://192.168.29.65:4000';
+      const selectedHouseId = await AsyncStorage.getItem('selectedHouseId');
+
+      if (!token || !selectedHouseId) {
+        return { items: [], hasMore: false, total: 0 };
+      }
+
+      const cachedKitchenKey = `kitchen_${selectedHouseId}`;
+      const kitchenId = await AsyncStorage.getItem(cachedKitchenKey);
+
+      if (!kitchenId) {
+        return { items: [], hasMore: false, total: 0 };
+      }
+
+      const response = await fetch(`${apiUrl}/graphql`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          query: `
+            query SearchInventoryFast($kitchenId: ID!, $searchTerm: String, $limit: Int, $offset: Int) {
+              searchInventoryFast(kitchenId: $kitchenId, searchTerm: $searchTerm, limit: $limit, offset: $offset) {
+                items {
+                  id
+                  name
+                  category
+                  defaultUnit
+                  location
+                  threshold
+                  brand
+                  tags
+                  imageUrl
+                  totalQuantity
+                  batches {
+                    id
+                    quantity
+                    unit
+                    expiryDate
+                    status
+                  }
+                  createdAt
+                  updatedAt
+                }
+                hasMore
+                total
+              }
+            }
+          `,
+          variables: { 
+            kitchenId, 
+            searchTerm: query.trim() || null, 
+            limit: 20, 
+            offset 
+          },
+        }),
+      });
+
+      const data = await response.json();
+
+      if (data.errors) {
+        console.error('Fast search errors:', data.errors);
+        return { items: [], hasMore: false, total: 0 };
+      }
+
+      return data.data?.searchInventoryFast || { items: [], hasMore: false, total: 0 };
+    } catch (error) {
+      console.error('Error performing fast search:', error);
+      return { items: [], hasMore: false, total: 0 };
+    }
+  }, []);
+
+  // Debounced search effect
+  useEffect(() => {
+    const timeoutId = setTimeout(async () => {
+      setLoading(true);
+      const result = await performFastSearch(searchQuery, 0);
+      
+      if (searchQuery.trim()) {
+        setSearchResults(result.items);
+      } else {
+        setInventoryItems(result.items);
+        setSearchResults([]);
+      }
+      
+      setHasMore(result.hasMore);
+      setSearchOffset(result.items.length);
+      setLoading(false);
+    }, 300); // Reduced debounce time for faster response
+
+    return () => clearTimeout(timeoutId);
+  }, [searchQuery, performFastSearch]);
+
+  // Load more results for pagination
+  const loadMore = useCallback(async () => {
+    if (!hasMore || loading) return;
+
+    setLoading(true);
+    const result = await performFastSearch(searchQuery, searchOffset);
+    
+    if (searchQuery.trim()) {
+      setSearchResults(prev => [...prev, ...result.items]);
+    } else {
+      setInventoryItems(prev => [...prev, ...result.items]);
+    }
+    
+    setHasMore(result.hasMore);
+    setSearchOffset(prev => prev + result.items.length);
+    setLoading(false);
+  }, [hasMore, loading, searchQuery, searchOffset, performFastSearch]);
 
   // Get or create user's kitchen for the selected house
   const getOrCreateKitchen = async (token: string, apiUrl: string): Promise<string | null> => {
@@ -433,7 +558,8 @@ export const useInventory = ({ kitchenId }: UseInventoryProps = {}) => {
                 category
                 defaultUnit
                 totalQuantity
-                status
+                isUpdate
+                message
                 createdAt
               }
             }
@@ -447,6 +573,9 @@ export const useInventory = ({ kitchenId }: UseInventoryProps = {}) => {
               location: 'PANTRY',
               threshold: 2,
               tags: [],
+              quantity: itemData.quantity || 1,
+              unit: itemData.unit || 'pieces',
+              purchaseDate: new Date().toISOString(),
             },
           },
         }),
@@ -456,42 +585,17 @@ export const useInventory = ({ kitchenId }: UseInventoryProps = {}) => {
       console.log('➕ Add item response:', JSON.stringify(data, null, 2));
 
       if (data.data?.createInventoryItem) {
-        // Now add a batch for the quantity
-        const itemId = data.data.createInventoryItem.id;
+        const result = data.data.createInventoryItem;
         
-        const batchResponse = await fetch(`${apiUrl}/graphql`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${token}`,
-          },
-          body: JSON.stringify({
-            query: `
-              mutation CreateInventoryBatch($input: CreateInventoryBatchInput!) {
-                createInventoryBatch(input: $input) {
-                  id
-                  quantity
-                  unit
-                }
-              }
-            `,
-            variables: {
-              input: {
-                itemId: itemId,
-                quantity: itemData.quantity || 1,
-                unit: itemData.unit || 'pieces',
-                purchaseDate: new Date().toISOString(),
-              },
-            },
-          }),
-        });
-
-        const batchData = await batchResponse.json();
-        console.log('📦 Add batch response:', JSON.stringify(batchData, null, 2));
-
         // Refresh inventory
         await fetchInventoryItems();
-        return { success: true };
+        
+        return { 
+          success: true, 
+          isUpdate: result.isUpdate,
+          message: result.message,
+          item: result
+        };
       } else if (data.errors) {
         console.error('GraphQL errors:', data.errors);
         return { success: false, error: data.errors[0]?.message };
@@ -636,8 +740,9 @@ export const useInventory = ({ kitchenId }: UseInventoryProps = {}) => {
 
   return {
     // Data
-    items: filteredItems,
+    items: searchQuery.trim() ? searchResults : filteredItems,
     allItems: inventoryItems,
+    searchResults,
     itemsByStatus,
     expiringItems,
     lowStockItems,
@@ -648,6 +753,7 @@ export const useInventory = ({ kitchenId }: UseInventoryProps = {}) => {
     selectedCategory,
     sortBy,
     loading,
+    hasMore,
     error: null, // Mock: no errors for now
     
     // Loading states
@@ -665,6 +771,8 @@ export const useInventory = ({ kitchenId }: UseInventoryProps = {}) => {
     filterByCategory,
     sortItems,
     refetch,
+    loadMore,
+    performFastSearch,
     
     // Setters
     setSearchQuery,

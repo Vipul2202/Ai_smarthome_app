@@ -84,6 +84,57 @@ export const inventoryResolvers = {
       }
     },
 
+    searchInventoryFast: async (_: any, { kitchenId, searchTerm, limit = 20, offset = 0 }: any, context: Context) => {
+      await requireKitchenAccess(context, kitchenId);
+      
+      try {
+        if (!searchTerm || !searchTerm.trim()) {
+          // Return paginated inventory items when no search term
+          const items = await context.prisma.inventoryItem.findMany({
+            where: { kitchenId },
+            include: {
+              batches: {
+                where: { status: 'ACTIVE' },
+                select: {
+                  quantity: true,
+                  unit: true,
+                },
+              },
+            },
+            orderBy: [
+              { name: 'asc' },
+            ],
+            take: limit,
+            skip: offset,
+          });
+
+          return {
+            items: items.map(item => ({
+              ...item,
+              totalQuantity: item.batches.reduce((sum, batch) => sum + batch.quantity, 0),
+            })),
+            hasMore: items.length === limit,
+            total: await context.prisma.inventoryItem.count({ where: { kitchenId } }),
+          };
+        }
+
+        const results = await searchInventoryItems(kitchenId, searchTerm.trim(), limit);
+        
+        return {
+          items: results,
+          hasMore: results.length === limit,
+          total: results.length,
+        };
+      } catch (error) {
+        console.error('Error in fast search:', error);
+        return {
+          items: [],
+          hasMore: false,
+          total: 0,
+        };
+      }
+    },
+
     categorizeProduct: async (_: any, { productName }: any, context: Context) => {
       try {
         const result = await categorizeProductWithAI(productName);
@@ -114,12 +165,112 @@ export const inventoryResolvers = {
         throw new Error('Category is required');
       }
 
-      return context.prisma.inventoryItem.create({
+      // Normalize the product name for consistent matching
+      const normalizedName = itemData.name.trim().toLowerCase();
+      const normalizedCategory = itemData.category.trim().toLowerCase();
+
+      // Check if product already exists (case-insensitive)
+      const existingItem = await context.prisma.inventoryItem.findFirst({
+        where: {
+          kitchenId,
+          name: {
+            equals: normalizedName,
+            mode: 'insensitive',
+          },
+          category: {
+            equals: normalizedCategory,
+            mode: 'insensitive',
+          },
+          location: itemData.location || 'PANTRY',
+        },
+        include: {
+          batches: {
+            where: { status: 'ACTIVE' },
+          },
+        },
+      });
+
+      if (existingItem) {
+        // Product exists, update quantity instead of creating new
+        const quantity = itemData.quantity || 1;
+        const unit = itemData.unit || itemData.defaultUnit || 'pieces';
+
+        // Create new batch for the existing item
+        const newBatch = await context.prisma.inventoryBatch.create({
+          data: {
+            itemId: existingItem.id,
+            quantity,
+            unit,
+            expiryDate: itemData.expiryDate,
+            purchaseDate: itemData.purchaseDate || new Date(),
+            purchasePrice: itemData.purchasePrice,
+            vendor: itemData.vendor,
+          },
+        });
+
+        // Return the updated item with total quantity
+        const updatedItem = await context.prisma.inventoryItem.findUnique({
+          where: { id: existingItem.id },
+          include: {
+            batches: {
+              where: { status: 'ACTIVE' },
+            },
+          },
+        });
+
+        const totalQuantity = updatedItem?.batches.reduce((sum, batch) => sum + batch.quantity, 0) || 0;
+
+        return {
+          ...updatedItem,
+          totalQuantity,
+          isUpdate: true,
+          message: `Updated ${itemData.name} quantity. Total: ${totalQuantity} ${unit}`,
+        };
+      }
+
+      // Product doesn't exist, create new item
+      const newItem = await context.prisma.inventoryItem.create({
         data: {
           ...itemData,
+          name: itemData.name.trim(), // Keep original case for display
+          category: itemData.category.trim(),
           kitchenId,
         },
       });
+
+      // Create initial batch if quantity is provided
+      if (itemData.quantity) {
+        await context.prisma.inventoryBatch.create({
+          data: {
+            itemId: newItem.id,
+            quantity: itemData.quantity,
+            unit: itemData.unit || itemData.defaultUnit || 'pieces',
+            expiryDate: itemData.expiryDate,
+            purchaseDate: itemData.purchaseDate || new Date(),
+            purchasePrice: itemData.purchasePrice,
+            vendor: itemData.vendor,
+          },
+        });
+      }
+
+      // Return the new item with batch info
+      const itemWithBatches = await context.prisma.inventoryItem.findUnique({
+        where: { id: newItem.id },
+        include: {
+          batches: {
+            where: { status: 'ACTIVE' },
+          },
+        },
+      });
+
+      const totalQuantity = itemWithBatches?.batches.reduce((sum, batch) => sum + batch.quantity, 0) || 0;
+
+      return {
+        ...itemWithBatches,
+        totalQuantity,
+        isUpdate: false,
+        message: `Added new product: ${itemData.name}`,
+      };
     },
 
     updateInventoryItem: async (_: any, { id, input }: any, context: Context) => {

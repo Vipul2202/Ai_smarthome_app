@@ -168,9 +168,71 @@ export default function AddItemScreen() {
       });
       
       if (result.success) {
-        Alert.alert('Success', 'Item added successfully!', [
-          { text: 'OK', onPress: () => router.back() }
-        ]);
+        if (result.isUpdate) {
+          // Show update popup for existing product
+          Alert.alert(
+            '📦 Product Updated!', 
+            result.message || `Updated ${formData.name} quantity successfully!`,
+            [
+              { 
+                text: 'View Inventory', 
+                onPress: () => {
+                  router.back();
+                  router.push('/(tabs)/inventory');
+                }
+              },
+              { 
+                text: 'Add Another', 
+                onPress: () => {
+                  // Reset form for adding another item
+                  setFormData({
+                    name: '',
+                    category: '',
+                    quantity: '',
+                    unit: 'pieces',
+                    expiryDate: null,
+                    barcode: '',
+                    notes: '',
+                    image: null,
+                  });
+                  setAiCategorization(null);
+                }
+              }
+            ]
+          );
+        } else {
+          // Show success for new product
+          Alert.alert(
+            '✅ New Product Added!', 
+            result.message || 'Item added successfully!',
+            [
+              { 
+                text: 'View Inventory', 
+                onPress: () => {
+                  router.back();
+                  router.push('/(tabs)/inventory');
+                }
+              },
+              { 
+                text: 'Add Another', 
+                onPress: () => {
+                  // Reset form for adding another item
+                  setFormData({
+                    name: '',
+                    category: '',
+                    quantity: '',
+                    unit: 'pieces',
+                    expiryDate: null,
+                    barcode: '',
+                    notes: '',
+                    image: null,
+                  });
+                  setAiCategorization(null);
+                }
+              }
+            ]
+          );
+        }
       } else {
         Alert.alert('Error', result.error || 'Failed to add item');
       }

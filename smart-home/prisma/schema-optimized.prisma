@@ -1,0 +1,68 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// OPTIMIZED SCHEMA - Merged House + Household + Integer IDs
+
+model User {
+  id                Int               @id @default(autoincrement())
+  email             String            @unique
+  name              String?
+  password          String
+  avatar            String?
+  phone             String?
+  location          String?
+  emailVerified     Boolean           @default(false)
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+  
+  // Direct relationships - no more complex household system
+  ownedKitchens     Kitchen[]         @relation("KitchenOwner")
+  sharedKitchens    KitchenMember[]   @relation("SharedKitchens")
+  timers            KitchenTimer[]
+  mealPlans         MealPlan[]
+  nutritionEntries  NutritionEntry[]
+  nutritionGoals    NutritionGoals?
+  preferences       UserPreferences?
+  settings          UserSettings?
+  wasteEntries      WasteEntry[]
+
+  @@index([email])
+}
+
+// MERGED: House + Household + Kitchen = Kitchen (with sharing capability)
+model Kitchen {
+  id          Int             @id @default(autoincrement())
+  ownerId     Int             // Owner of this kitchen
+  name        String          // "My Home Kitchen", "Office Kitchen"
+  description String?
+  type        KitchenType     @default(HOME)
+  address     String?         // Physical address (was House.description)
+  inviteCode  String?         @unique // For sharing with family/roommates
+  isShared    Boolean         @default(false) // Whether others can join
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+  
+  // Relationships
+  owner       User            @relation("KitchenOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  members     KitchenMember[] @relation("KitchenMembers")
+  inventory   InventoryItem[]
+  shopping    ShoppingList[]
+  expenses    Expense[]
+  reminders   Reminder[]
+  logs        UsageLog[]
+
+  @@index([ownerId])
+  @@index([inviteCode])
+  @@index([isShared])
+}
+
+// Simplified sharing - replaces HouseholdMember
+model KitchenMember {
+  id       

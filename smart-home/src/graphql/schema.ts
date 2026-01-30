@@ -231,6 +231,23 @@ export const typeDefs: DocumentNode = gql`
     similarity: Float!
   }
 
+  type FastSearchResult {
+    items: [InventoryItem!]!
+    hasMore: Boolean!
+    total: Int!
+  }
+
+  type InventoryCreationResponse {
+    id: ID!
+    name: String!
+    category: String!
+    totalQuantity: Float!
+    defaultUnit: String!
+    location: String!
+    isUpdate: Boolean!
+    message: String!
+  }
+
   type VoiceUpdateResult {
     success: Boolean!
     message: String!
@@ -690,6 +707,12 @@ export const typeDefs: DocumentNode = gql`
     brand: String
     tags: [String!]
     location: StorageLocation!
+    quantity: Float
+    unit: String
+    expiryDate: DateTime
+    purchaseDate: DateTime
+    purchasePrice: Float
+    vendor: String
   }
 
   input CreateInventoryBatchInput {
@@ -1051,6 +1074,7 @@ export const typeDefs: DocumentNode = gql`
 
     # Voice Control
     searchInventoryByVoice(kitchenId: ID!, searchTerm: String!): [InventorySearchResult!]!
+    searchInventoryFast(kitchenId: ID!, searchTerm: String, limit: Int = 20, offset: Int = 0): FastSearchResult!
     
     # AI Categorization
     categorizeProduct(productName: String!): ProductCategorization!
@@ -1089,7 +1113,7 @@ export const typeDefs: DocumentNode = gql`
     deleteKitchen(id: ID!): Boolean!
 
     # Inventory
-    createInventoryItem(input: CreateInventoryItemInput!): InventoryItem!
+    createInventoryItem(input: CreateInventoryItemInput!): InventoryCreationResponse!
     updateInventoryItem(id: ID!, input: UpdateInventoryItemInput!): InventoryItem!
     deleteInventoryItem(id: ID!): Boolean!
     
