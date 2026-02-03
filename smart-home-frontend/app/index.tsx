@@ -1,62 +1,97 @@
 import { useEffect, useState } from 'react';
 import { Redirect } from 'expo-router';
 import { useAuth } from '@/providers/AuthProvider';
-import { useHouse } from '@/contexts/HouseContext';
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
-import { SmartHomeLoading } from '@/components/ui/SmartHomeLoading';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 export default function Index() {
   const { user, isLoading: authLoading } = useAuth();
-  const { houses, isLoading: housesLoading, loadHouses } = useHouse();
-  const [hasCheckedHouses, setHasCheckedHouses] = useState(false);
-  const [selectedHouseId, setSelectedHouseId] = useState<string | null>(null);
-  const [hasCheckedSelection, setHasCheckedSelection] = useState(false);
+  const [isCheckingAuth, setIsCheckingAuth] = useState(true);
+  const [redirectPath, setRedirectPath] = useState<string | null>(null);
 
   useEffect(() => {
-    // Only load houses if user is authenticated and we haven't checked yet
-    if (user && !hasCheckedHouses) {
-      loadHouses().finally(() => setHasCheckedHouses(true));
-    }
-  }, [user, hasCheckedHouses]);
+    const checkAuthentication = async () => {
+      try {
+        console.log('🔍 Starting authentication check...');
+        
+        // Wait for auth provider to finish loading
+        if (authLoading) {
+          console.log('⏳ Auth provider still loading...');
+          return;
+        }
 
-  useEffect(() => {
-    // Check if a house is selected
-    const checkSelectedHouse = async () => {
-      if (user && hasCheckedHouses) {
-        const houseId = await AsyncStorage.getItem('selectedHouseId');
-        setSelectedHouseId(houseId);
-        setHasCheckedSelection(true);
+        // Check if user exists in context
+        if (!user) {
+          console.log('❌ No user in context');
+          
+          // Double-check stored auth data
+          const token = await AsyncStorage.getItem('authToken');
+          const userData = await AsyncStorage.getItem('userData');
+          const tokenExpiry = await AsyncStorage.getItem('tokenExpiry');
+          
+          console.log('📱 Stored auth check:');
+          console.log('- Token exists:', !!token);
+          console.log('- UserData exists:', !!userData);
+          console.log('- TokenExpiry:', tokenExpiry);
+          
+          if (token && tokenExpiry) {
+            const expiryDate = new Date(tokenExpiry);
+            const now = new Date();
+            const isExpired = now >= expiryDate;
+            
+            console.log('- Token expired:', isExpired);
+            
+            if (isExpired) {
+              console.log('🗑️ Clearing expired auth data');
+              await AsyncStorage.multiRemove([
+                'authToken', 
+                'userData', 
+                'tokenExpiry',
+                'selectedHouseId',
+                'selectedHouseName'
+              ]);
+            }
+          }
+          
+          // No valid authentication - redirect to login
+          console.log('🚪 Redirecting to login screen');
+          setRedirectPath('/(auth)/login');
+          setIsCheckingAuth(false);
+          return;
+        }
+
+        // User is authenticated
+        console.log('✅ User authenticated:', user.email);
+        
+        // Check if user has selected a house
+        const selectedHouseId = await AsyncStorage.getItem('selectedHouseId');
+        console.log('🏠 Selected house ID:', selectedHouseId);
+        
+        if (selectedHouseId) {
+          console.log('🏠 Redirecting to dashboard');
+          setRedirectPath('/(tabs)');
+        } else {
+          console.log('🏠 Redirecting to house selection');
+          setRedirectPath('/select-house');
+        }
+        
+        setIsCheckingAuth(false);
+        
+      } catch (error) {
+        console.error('❌ Error during auth check:', error);
+        setRedirectPath('/(auth)/login');
+        setIsCheckingAuth(false);
       }
     };
-    checkSelectedHouse();
-  }, [user, hasCheckedHouses]);
 
-  // Show loading while checking auth state
-  if (authLoading) {
-    return <LoadingSpinner overlay text="Loading..." />;
+    checkAuthentication();
+  }, [user, authLoading]);
+
+  // Show loading while checking authentication
+  if (authLoading || isCheckingAuth || !redirectPath) {
+    return <LoadingSpinner overlay text="Checking authentication..." />;
   }
 
-  // Not authenticated - go to login
-  if (!user) {
-    return <Redirect href="/(auth)/login" />;
-  }
-
-  // Show loading while checking houses
-  if (!hasCheckedHouses || housesLoading || !hasCheckedSelection) {
-    return <SmartHomeLoading text="Loading your houses..." />;
-  }
-
-  // Authenticated but no houses - go to create house
-  if (houses.length === 0) {
-    return <Redirect href="/houses/create" />;
-  }
-
-  // Authenticated with houses but no house selected - go to select house
-  if (!selectedHouseId) {
-    return <Redirect href="/select-house" />;
-  }
-
-  // Authenticated with houses and house selected - go to dashboard
-  return <Redirect href="/(tabs)" />;
+  console.log('🚀 Redirecting to:', redirectPath);
+  return <Redirect href={redirectPath as any} />;
 }

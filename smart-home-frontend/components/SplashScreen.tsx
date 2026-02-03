@@ -175,7 +175,7 @@ const CustomSplashScreen: React.FC<SplashScreenProps> = ({ onFinish }) => {
         </View>
 
         {/* Version */}
-        <Text style={styles.version}>Version 1.0.0</Text>
+        {/* <Text style={styles.version}>Version 1.0.0</Text> */}
       </Animated.View>
     </LinearGradient>
   );

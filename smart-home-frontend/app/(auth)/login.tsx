@@ -10,12 +10,14 @@ import {
 import { Link, router } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { StatusBar } from 'expo-status-bar';
+import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '@/providers/AuthProvider';
 import { useTheme } from '@/providers/ThemeProvider';
 import { Input } from '@/components/ui/Input';
 import { Button } from '@/components/ui/Button';
 import ThemeToggle from '@/components/ui/ThemeToggle';
 import NetworkDiagnostic from '@/components/NetworkDiagnostic';
+import { GoogleAuthService } from '@/lib/googleAuth';
 
 const validateEmail = (email: string) => {
   const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -27,9 +29,10 @@ export default function LoginScreen() {
   const [password, setPassword] = useState('');
   const [errors, setErrors] = useState<{ email?: string; password?: string }>({});
   const [isLoading, setIsLoading] = useState(false);
+  const [isGoogleLoading, setIsGoogleLoading] = useState(false);
   const [showNetworkDiagnostic, setShowNetworkDiagnostic] = useState(false);
   
-  const { login } = useAuth();
+  const { login, googleLogin } = useAuth();
   const { colors, isDark } = useTheme();
 
   const validateForm = () => {
@@ -113,6 +116,42 @@ export default function LoginScreen() {
       }
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const handleGoogleLogin = async () => {
+    setIsGoogleLoading(true);
+    try {
+      const authResult = await GoogleAuthService.signIn();
+      
+      if (authResult.success && authResult.idToken) {
+        const result = await googleLogin(authResult.idToken);
+        
+        if (result.success) {
+          // Check if user has a previously selected house
+          const AsyncStorage = (await import('@react-native-async-storage/async-storage')).default;
+          const lastSelectedHouseId = await AsyncStorage.getItem('selectedHouseId');
+          
+          if (lastSelectedHouseId) {
+            console.log('🏠 User has previously selected house, redirecting to dashboard');
+            router.replace('/(tabs)');
+          } else {
+            console.log('🏠 No previously selected house, user must select');
+            router.replace('/');
+          }
+        } else {
+          Alert.alert('Google Login Failed', result.error || 'Authentication failed');
+        }
+      } else {
+        if (authResult.error !== 'User cancelled authentication') {
+          Alert.alert('Google Login Failed', authResult.error || 'Authentication failed');
+        }
+      }
+    } catch (error: any) {
+      console.error('Google login error:', error);
+      Alert.alert('Google Login Failed', 'An unexpected error occurred');
+    } finally {
+      setIsGoogleLoading(false);
     }
   };
 
@@ -220,8 +259,48 @@ export default function LoginScreen() {
                 title={isLoading ? 'Signing In...' : 'Sign In'}
                 onPress={handleLogin}
                 loading={isLoading}
-                disabled={isLoading}
+                disabled={isLoading || isGoogleLoading}
                 style={{ marginTop: 8 }}
+              />
+
+              {/* Divider */}
+              <View style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                marginVertical: 24,
+              }}>
+                <View style={{
+                  flex: 1,
+                  height: 1,
+                  backgroundColor: colors.border,
+                }} />
+                <Text style={{
+                  color: colors.textSecondary,
+                  fontSize: 14,
+                  paddingHorizontal: 16,
+                }}>
+                  or
+                </Text>
+                <View style={{
+                  flex: 1,
+                  height: 1,
+                  backgroundColor: colors.border,
+                }} />
+              </View>
+
+              {/* Google Sign In Button */}
+              <Button
+                title={isGoogleLoading ? 'Signing in with Google...' : 'Continue with Google'}
+                onPress={handleGoogleLogin}
+                loading={isGoogleLoading}
+                disabled={isLoading || isGoogleLoading}
+                variant="outline"
+                leftIcon={<Ionicons name="logo-google" size={20} color={colors.text} />}
+                style={{ 
+                  borderColor: colors.border,
+                  backgroundColor: colors.surface,
+                }}
+                textStyle={{ color: colors.text }}
               />
 
               <Link href="/(auth)/forgot-password" asChild>

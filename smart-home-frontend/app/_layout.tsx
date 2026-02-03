@@ -6,11 +6,12 @@ import * as SplashScreen from 'expo-splash-screen';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { ApolloProvider } from '@apollo/client';
+import { Audio } from 'expo-av';
 
 import { apolloClient } from '@/lib/apollo-client';
 import { AuthProvider } from '@/providers/AuthProvider';
 import { ThemeProvider } from '@/providers/ThemeProvider';
-import { HouseProvider } from '../contexts/HouseContext';
+import { HouseProvider } from '../hooks/useHouse';
 import CustomSplashScreen from '@/components/SplashScreen';
 
 // Prevent the splash screen from auto-hiding before asset loading is complete
@@ -26,6 +27,10 @@ LogBox.ignoreLogs([
   'Failed to stop recording',
   'The action \'GO_BACK\' was not handled by any navigator',
   'GO_BACK',
+  'Error playing audio',
+  'None of the available extractors',
+  'Audio playback error',
+  'Fallback audio playback',
 ]);
 
 export default function RootLayout() {
@@ -35,13 +40,22 @@ export default function RootLayout() {
   useEffect(() => {
     async function prepare() {
       try {
+        // Initialize audio settings for better compatibility
+        await Audio.setAudioModeAsync({
+          allowsRecordingIOS: false,
+          staysActiveInBackground: false,
+          playsInSilentModeIOS: true,
+          shouldDuckAndroid: true,
+          playThroughEarpieceAndroid: false,
+        });
+        
         // Pre-load fonts, make any API calls you need to do here
         // await Font.loadAsync(Entypo.font);
         
         // Artificially delay for demo purposes
         await new Promise(resolve => setTimeout(resolve, 1000));
       } catch (e) {
-        console.warn(e);
+        console.warn('Audio initialization error:', e);
       } finally {
         setIsReady(true);
         await SplashScreen.hideAsync();

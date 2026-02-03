@@ -60,6 +60,16 @@ export const GET_ME_QUERY = gql`
 `;
 
 // Household & Kitchen Queries
+export const GET_HOUSES = gql`
+  query GetHouses {
+    houses {
+      id
+      name
+      description
+    }
+  }
+`;
+
 export const GET_HOUSEHOLDS = gql`
   query GetHouseholds {
     households {

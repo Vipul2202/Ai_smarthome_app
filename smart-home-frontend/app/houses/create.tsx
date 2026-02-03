@@ -17,7 +17,7 @@ import { router } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useTheme } from '@/providers/ThemeProvider';
 import { useAuth } from '@/providers/AuthProvider';
-import { useHouse } from '@/contexts/HouseContext';
+import { useHouse } from '@/hooks/useHouse';
 
 export default function CreateHouseScreen() {
   const { colors, isDark } = useTheme();
@@ -37,11 +37,7 @@ export default function CreateHouseScreen() {
       newErrors.name = 'House name must be at least 2 characters';
     }
     
-    if (!description.trim()) {
-      newErrors.description = 'Description is required';
-    } else if (description.trim().length < 10) {
-      newErrors.description = 'Description must be at least 10 characters';
-    }
+    // Description is now optional - no validation required
     
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
@@ -53,7 +49,7 @@ export default function CreateHouseScreen() {
     try {
       setIsLoading(true);
       
-      const result = await createHouse(name.trim(), description.trim());
+      const result = await createHouse(name.trim(), description.trim() || null);
       
       if (result.success) {
         Alert.alert(
@@ -113,7 +109,9 @@ export default function CreateHouseScreen() {
           <View style={styles.formContainer}>
             {/* House Name Input */}
             <View style={styles.inputContainer}>
-              <Text style={[styles.inputLabel, { color: colors.text }]}>House Name</Text>
+              <Text style={[styles.inputLabel, { color: colors.text }]}>
+                House Name <Text style={{ color: colors.error }}>*</Text>
+              </Text>
               <View style={[
                 styles.inputWrapper, 
                 { backgroundColor: colors.surface, borderColor: colors.border },
@@ -137,7 +135,9 @@ export default function CreateHouseScreen() {
 
             {/* Description Input */}
             <View style={styles.inputContainer}>
-              <Text style={[styles.inputLabel, { color: colors.text }]}>Description</Text>
+              <Text style={[styles.inputLabel, { color: colors.text }]}>
+                Description <Text style={{ color: colors.textSecondary, fontWeight: '400' }}>(Optional)</Text>
+              </Text>
               <View style={[
                 styles.inputWrapper, 
                 styles.textAreaWrapper,

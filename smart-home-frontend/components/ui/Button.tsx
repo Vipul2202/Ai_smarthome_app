@@ -112,9 +112,13 @@ export const Button: React.FC<ButtonProps> = ({
         />
       ) : (
         <>
-          {leftIcon && <View style={{ marginRight: 8 }}>{leftIcon}</View>}
+          {leftIcon && React.isValidElement(leftIcon) && (
+            <View style={{ marginRight: 8 }}>{leftIcon}</View>
+          )}
           <Text style={[getTextStyle(), textStyle]}>{title}</Text>
-          {rightIcon && <View style={{ marginLeft: 8 }}>{rightIcon}</View>}
+          {rightIcon && React.isValidElement(rightIcon) && (
+            <View style={{ marginLeft: 8 }}>{rightIcon}</View>
+          )}
         </>
       )}
     </TouchableOpacity>

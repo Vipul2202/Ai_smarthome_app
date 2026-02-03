@@ -336,14 +336,14 @@ export default function RecipeDetailScreen() {
                   title="Start Cooking Timer"
                   onPress={() => router.push(`/timer?duration=${recipe.cookTime}&title=${encodeURIComponent(recipe.title)}`)}
                   variant="outline"
-                  leftIcon="timer-outline"
+                  leftIcon={<Ionicons name="timer-outline" size={16} color="#3B82F6" />}
                 />
                 
                 <Button
                   title="Add to Meal Plan"
                   onPress={() => router.push(`/meal-planning/add?recipeId=${recipe.id}`)}
                   variant="outline"
-                  leftIcon="calendar-outline"
+                  leftIcon={<Ionicons name="calendar-outline" size={16} color="#3B82F6" />}
                 />
               </View>
             </CardContent>

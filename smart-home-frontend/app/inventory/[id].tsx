@@ -308,14 +308,14 @@ export default function ItemDetailScreen() {
                 title="Find Recipes"
                 onPress={() => router.push(`/recipes?ingredient=${encodeURIComponent(item.name)}`)}
                 variant="outline"
-                leftIcon="restaurant-outline"
+                leftIcon={<Ionicons name="restaurant-outline" size={16} color="#3B82F6" />}
               />
               
               <Button
                 title="Delete Item"
                 onPress={() => setShowDeleteModal(true)}
                 variant="destructive"
-                leftIcon="trash-outline"
+                leftIcon={<Ionicons name="trash-outline" size={16} color="#FFFFFF" />}
               />
             </View>
           </CardContent>

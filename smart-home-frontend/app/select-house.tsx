@@ -12,8 +12,10 @@ import { StatusBar } from 'expo-status-bar';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useTheme } from '@/providers/ThemeProvider';
+import { useAuth } from '@/providers/AuthProvider';
 import { router } from 'expo-router';
 import { SmartHomeLoading } from '@/components/ui/SmartHomeLoading';
+import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 interface House {
@@ -25,14 +27,34 @@ interface House {
 
 export default function SelectHouseScreen() {
   const { colors, isDark } = useTheme();
+  const { user, isLoading: authLoading } = useAuth();
   const [houses, setHouses] = useState<House[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedHouseId, setSelectedHouseId] = useState<string | null>(null);
 
+  // Redirect to login if not authenticated
   useEffect(() => {
-    fetchHouses();
-    loadSelectedHouse();
-  }, []);
+    if (!authLoading && !user) {
+      console.log('🚫 User not authenticated, redirecting to login');
+      router.replace('/(auth)/login');
+      return;
+    }
+
+    if (user) {
+      fetchHouses();
+      loadSelectedHouse();
+    }
+  }, [user, authLoading]);
+
+  // Show loading while checking authentication
+  if (authLoading) {
+    return <LoadingSpinner overlay text="Loading..." />;
+  }
+
+  // Don't render if user is not authenticated
+  if (!user) {
+    return <LoadingSpinner overlay text="Redirecting to login..." />;
+  }
 
   const loadSelectedHouse = async () => {
     try {

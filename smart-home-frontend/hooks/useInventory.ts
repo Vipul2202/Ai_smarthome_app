@@ -1,12 +1,14 @@
 import { useState, useEffect } from 'react';
 import { InventoryItem } from '@/types';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { NetworkManager } from '@/lib/network';
+import { getDefaultLocationForCategory } from '@/utils/locations';
 
 interface UseInventoryProps {
-  kitchenId?: string;
+  houseId?: string;
 }
 
-export const useInventory = ({ kitchenId }: UseInventoryProps = {}) => {
+export const useInventory = ({ houseId }: UseInventoryProps = {}) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('All');
   const [sortBy, setSortBy] = useState<'name' | 'expiry' | 'quantity'>('name');
@@ -17,155 +19,6 @@ export const useInventory = ({ kitchenId }: UseInventoryProps = {}) => {
   const [deletingItem, setDeletingItem] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
 
-  // Get or create user's kitchen for the selected house
-  const getOrCreateKitchen = async (token: string, apiUrl: string): Promise<string | null> => {
-    try {
-      // Get selected house (if any)
-      const selectedHouseId = await AsyncStorage.getItem('selectedHouseId');
-      const selectedHouseName = await AsyncStorage.getItem('selectedHouseName');
-      
-      console.log('🏠 Selected house:', selectedHouseName, selectedHouseId);
-
-      if (!selectedHouseId || !selectedHouseName) {
-        console.error('No house selected');
-        return null;
-      }
-
-      // Check if we have a cached kitchen ID for this house
-      const cachedKitchenKey = `kitchen_${selectedHouseId}`;
-      const cachedKitchenId = await AsyncStorage.getItem(cachedKitchenKey);
-      
-      if (cachedKitchenId) {
-        console.log('✅ Using cached kitchen ID:', cachedKitchenId);
-        return cachedKitchenId;
-      }
-
-      // First, try to get user's households
-      const householdsResponse = await fetch(`${apiUrl}/graphql`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          query: `
-            query GetHouseholds {
-              households {
-                id
-                name
-                kitchens {
-                  id
-                  name
-                }
-              }
-            }
-          `,
-        }),
-      });
-
-      const householdsData = await householdsResponse.json();
-      console.log('🏠 Households response:', JSON.stringify(householdsData, null, 2));
-
-      // Check if a household exists for this house (by matching name)
-      const existingHousehold = householdsData.data?.households?.find(
-        (h: any) => h.name === selectedHouseName
-      );
-
-      if (existingHousehold?.kitchens?.[0]?.id) {
-        const kitchenId = existingHousehold.kitchens[0].id;
-        console.log('✅ Using existing kitchen for house:', kitchenId);
-        // Cache the kitchen ID
-        await AsyncStorage.setItem(cachedKitchenKey, kitchenId);
-        return kitchenId;
-      }
-
-      // If no household exists for this house, create one
-      let householdId = existingHousehold?.id;
-      
-      if (!householdId) {
-        console.log('📝 Creating new household for house:', selectedHouseName);
-        const createHouseholdResponse = await fetch(`${apiUrl}/graphql`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${token}`,
-          },
-          body: JSON.stringify({
-            query: `
-              mutation CreateHousehold($input: CreateHouseholdInput!) {
-                createHousehold(input: $input) {
-                  id
-                  name
-                }
-              }
-            `,
-            variables: {
-              input: {
-                name: selectedHouseName,
-                description: `Household for ${selectedHouseName}`,
-              },
-            },
-          }),
-        });
-
-        const householdData = await createHouseholdResponse.json();
-        console.log('🏠 Create household response:', JSON.stringify(householdData, null, 2));
-        
-        if (householdData.data?.createHousehold?.id) {
-          householdId = householdData.data.createHousehold.id;
-        } else {
-          console.error('Failed to create household');
-          return null;
-        }
-      }
-
-      // Create a kitchen in the household
-      console.log('🍳 Creating new kitchen for house...');
-      const createKitchenResponse = await fetch(`${apiUrl}/graphql`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          query: `
-            mutation CreateKitchen($input: CreateKitchenInput!) {
-              createKitchen(input: $input) {
-                id
-                name
-              }
-            }
-          `,
-          variables: {
-            input: {
-              householdId: householdId,
-              name: `${selectedHouseName} Kitchen`,
-              description: `Main kitchen for ${selectedHouseName}`,
-              type: 'HOME',
-            },
-          },
-        }),
-      });
-
-      const kitchenData = await createKitchenResponse.json();
-      console.log('🍳 Create kitchen response:', JSON.stringify(kitchenData, null, 2));
-
-      if (kitchenData.data?.createKitchen?.id) {
-        const newKitchenId = kitchenData.data.createKitchen.id;
-        console.log('✅ Created new kitchen:', newKitchenId);
-        // Cache the kitchen ID for this house
-        await AsyncStorage.setItem(cachedKitchenKey, newKitchenId);
-        return newKitchenId;
-      }
-
-      return null;
-    } catch (error) {
-      console.error('Error getting/creating kitchen:', error);
-      return null;
-    }
-  };
-
-  // Fetch inventory items from backend
   const fetchInventoryItems = async (isRefresh = false) => {
     try {
       if (isRefresh) {
@@ -175,88 +28,120 @@ export const useInventory = ({ kitchenId }: UseInventoryProps = {}) => {
       }
       
       const token = await AsyncStorage.getItem('authToken');
-      const apiUrl = process.env.EXPO_PUBLIC_API_URL || 'http://192.168.29.65:4000';
 
       if (!token) {
-        console.log('No auth token, skipping inventory fetch');
+        console.log('❌ No auth token found - user needs to login');
         setInventoryItems([]);
         return;
       }
 
-      // Get or create kitchen
-      const actualKitchenId = kitchenId || await getOrCreateKitchen(token, apiUrl);
+      console.log('🔑 Auth token found:', token.substring(0, 20) + '...');
+
+      // Get selected house ID
+      const selectedHouseId = houseId || await AsyncStorage.getItem('selectedHouseId');
       
-      if (!actualKitchenId) {
-        console.error('No kitchen available');
+      if (!selectedHouseId) {
+        console.error('❌ No house selected - user needs to select a house');
         setInventoryItems([]);
         return;
       }
 
-      console.log('📦 Fetching inventory for kitchen:', actualKitchenId);
+      console.log('🏠 Selected house ID:', selectedHouseId);
+      console.log('📦 Fetching inventory for house:', selectedHouseId);
 
-      const response = await fetch(`${apiUrl}/graphql`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          query: `
-            query GetInventoryItems($kitchenId: ID!) {
-              inventoryItems(kitchenId: $kitchenId) {
-                id
-                name
-                category
-                defaultUnit
-                location
-                totalQuantity
-                status
-                nextExpiry
-                createdAt
-                updatedAt
-                batches {
-                  id
-                  quantity
-                  unit
-                  status
-                }
-              }
+      // Simplified query with better error handling
+      try {
+        const data = await NetworkManager.makeGraphQLRequest(`
+          query GetInventoryItems($houseId: ID!) {
+            inventoryItems(houseId: $houseId) {
+              id
+              name
+              category
+              location
+              quantity
+              unit
+              imageUrl
+              barcode
+              description
+              expiryDate
+              createdAt
+              updatedAt
             }
-          `,
-          variables: { kitchenId: actualKitchenId },
-        }),
-      });
-
-      const data = await response.json();
-      
-      // Check for errors first
-      if (data.errors) {
-        console.log('⚠️ Database connection issue - using empty inventory');
-        setInventoryItems([]);
-        return;
-      }
-
-      console.log('📦 Inventory response:', JSON.stringify(data, null, 2));
-
-      if (data.data?.inventoryItems) {
-        const items: InventoryItem[] = data.data.inventoryItems.map((item: any) => ({
-          id: item.id,
-          name: item.name,
-          category: item.category ? item.category.toLowerCase() : null,
-          quantity: item.totalQuantity || 0,
-          unit: item.defaultUnit || 'pieces',
-          expiryDate: item.nextExpiry,
-          status: item.status?.toLowerCase() || 'good',
-          location: item.location?.toLowerCase(),
-          createdAt: item.createdAt,
-          updatedAt: item.updatedAt,
-        }));
+          }
+        `, { houseId: selectedHouseId }, token);
+        
+        // Set inventory items
+        const items = data.data?.inventoryItems || [];
         setInventoryItems(items);
-      } else {
-        setInventoryItems([]);
+        console.log(`✅ Loaded ${items.length} inventory items successfully`);
+
+        // Cache the data for offline access
+        try {
+          await AsyncStorage.setItem(`inventory_${selectedHouseId}`, JSON.stringify(items));
+          await AsyncStorage.setItem(`inventory_${selectedHouseId}_timestamp`, Date.now().toString());
+        } catch (cacheError) {
+          console.warn('Failed to cache inventory data:', cacheError);
+        }
+      } catch (graphqlError) {
+        console.error('❌ GraphQL Error:', graphqlError.message);
+        
+        // Check for specific error types
+        if (graphqlError.message.includes('Authentication') || graphqlError.message.includes('unauthorized')) {
+          console.log('🔑 Authentication failed - token may be expired');
+          console.log('💡 Solution: Logout and login again');
+        } else if (graphqlError.message.includes('House not found') || graphqlError.message.includes('access denied')) {
+          console.log('🏠 House access denied - house may not belong to user');
+          console.log('💡 Solution: Select a different house or check house ownership');
+        } else if (graphqlError.message.includes('Network request failed: 400')) {
+          console.log('📡 400 Error - likely authentication or validation issue');
+          console.log('💡 Check: 1) Valid token 2) House selected 3) House ownership');
+        }
+        
+        // Try to load from cache if GraphQL fails
+        try {
+          const cachedData = await AsyncStorage.getItem(`inventory_${selectedHouseId}`);
+          const cacheTimestamp = await AsyncStorage.getItem(`inventory_${selectedHouseId}_timestamp`);
+          
+          if (cachedData && cacheTimestamp) {
+            const cacheAge = Date.now() - parseInt(cacheTimestamp);
+            // Use cache if less than 1 hour old
+            if (cacheAge < 60 * 60 * 1000) {
+              const cachedItems = JSON.parse(cachedData);
+              setInventoryItems(cachedItems);
+              console.log(`📦 Loaded ${cachedItems.length} items from cache (GraphQL failed)`);
+              return;
+            }
+          }
+        } catch (cacheError) {
+          console.warn('Failed to load from cache:', cacheError);
+        }
+        
+        throw graphqlError; // Re-throw to be caught by outer catch
       }
-    } catch (error) {
-      console.log('⚠️ Error fetching inventory - database may be unavailable');
+
+    } catch (error: any) {
+      console.error('❌ Error fetching inventory:', error.message);
+      console.log('🔍 Debug info:');
+      console.log('- API URL:', process.env.EXPO_PUBLIC_API_URL);
+      console.log('- Error type:', error.constructor.name);
+      console.log('- Full error:', error);
+      
+      // Try to load from cache as last resort
+      try {
+        const selectedHouseId = houseId || await AsyncStorage.getItem('selectedHouseId');
+        if (selectedHouseId) {
+          const cachedData = await AsyncStorage.getItem(`inventory_${selectedHouseId}`);
+          if (cachedData) {
+            const cachedItems = JSON.parse(cachedData);
+            setInventoryItems(cachedItems);
+            console.log(`📦 Loaded ${cachedItems.length} items from cache (fallback)`);
+            return;
+          }
+        }
+      } catch (cacheError) {
+        console.warn('Failed to load from cache:', cacheError);
+      }
+      
       setInventoryItems([]);
     } finally {
       setLoading(false);
@@ -264,123 +149,53 @@ export const useInventory = ({ kitchenId }: UseInventoryProps = {}) => {
     }
   };
 
-  // Fetch on mount and when kitchenId changes
+  // Fetch on mount and when houseId changes
   useEffect(() => {
     fetchInventoryItems();
-  }, [kitchenId]);
+  }, [houseId]);
 
   // Filter and sort items
-  const filteredItems = inventoryItems
-    .filter(item => {
-      const matchesSearch = item.name.toLowerCase().includes(searchQuery.toLowerCase());
-      const matchesCategory = selectedCategory === 'All' || item.category === selectedCategory;
-      return matchesSearch && matchesCategory;
-    })
-    .sort((a, b) => {
-      switch (sortBy) {
-        case 'name':
-          return a.name.localeCompare(b.name);
-        case 'expiry':
-          if (!a.expiryDate && !b.expiryDate) return 0;
-          if (!a.expiryDate) return 1;
-          if (!b.expiryDate) return -1;
-          return new Date(a.expiryDate).getTime() - new Date(b.expiryDate).getTime();
-        case 'quantity':
-          return b.quantity - a.quantity;
-        default:
-          return 0;
-      }
-    });
-
-  // Get items by status
-  const itemsByStatus = {
-    good: inventoryItems.filter(item => item.status === 'good'),
-    warning: inventoryItems.filter(item => item.status === 'warning'),
-    critical: inventoryItems.filter(item => item.status === 'critical'),
-  };
-
-  // Get expiring items (next 7 days)
-  const expiringItems = inventoryItems.filter(item => {
-    if (!item.expiryDate) return false;
-    const expiryDate = new Date(item.expiryDate);
-    const now = new Date();
-    const diffInDays = Math.ceil((expiryDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
-    return diffInDays <= 7 && diffInDays >= 0;
+  const filteredItems = inventoryItems.filter(item => {
+    const matchesSearch = item.name.toLowerCase().includes(searchQuery.toLowerCase());
+    const matchesCategory = selectedCategory === 'All' || item.category === selectedCategory;
+    return matchesSearch && matchesCategory;
   });
 
-  // Get low stock items
-  const lowStockItems = inventoryItems.filter(item => item.quantity <= 2);
-
-  // Categories
-  const categories = ['All', ...Array.from(new Set(inventoryItems.map(item => item.category)))];
+  const sortedItems = [...filteredItems].sort((a, b) => {
+    switch (sortBy) {
+      case 'name':
+        return a.name.localeCompare(b.name);
+      case 'quantity':
+        return b.quantity - a.quantity;
+      default:
+        return a.name.localeCompare(b.name);
+    }
+  });
 
   const getItem = async (id: string): Promise<InventoryItem | null> => {
     try {
       const token = await AsyncStorage.getItem('authToken');
-      const apiUrl = process.env.EXPO_PUBLIC_API_URL || 'http://192.168.29.65:4000';
+      if (!token) return null;
 
-      if (!token) {
-        console.error('No auth token');
-        return null;
-      }
+      const data = await NetworkManager.makeGraphQLRequest(`
+        query GetInventoryItem($id: ID!) {
+          inventoryItem(id: $id) {
+            id
+            name
+            category
+            location
+            quantity
+            unit
+            imageUrl
+            barcode
+            description
+            createdAt
+            updatedAt
+          }
+        }
+      `, { id }, token);
 
-      const response = await fetch(`${apiUrl}/graphql`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          query: `
-            query GetInventoryItem($id: ID!) {
-              inventoryItem(id: $id) {
-                id
-                name
-                category
-                defaultUnit
-                location
-                totalQuantity
-                status
-                nextExpiry
-                createdAt
-                updatedAt
-                batches {
-                  id
-                  quantity
-                  unit
-                  status
-                }
-              }
-            }
-          `,
-          variables: { id },
-        }),
-      });
-
-      const data = await response.json();
-      
-      if (data.errors) {
-        console.error('GraphQL errors:', data.errors);
-        return null;
-      }
-
-      if (data.data?.inventoryItem) {
-        const item = data.data.inventoryItem;
-        return {
-          id: item.id,
-          name: item.name,
-          category: item.category ? item.category.toLowerCase() : null,
-          quantity: item.totalQuantity || 0,
-          unit: item.defaultUnit || 'pieces',
-          expiryDate: item.nextExpiry,
-          status: item.status?.toLowerCase() || 'good',
-          location: item.location?.toLowerCase(),
-          createdAt: item.createdAt,
-          updatedAt: item.updatedAt,
-        };
-      }
-
-      return null;
+      return data.data?.inventoryItem || null;
     } catch (error) {
       console.error('Error fetching item:', error);
       return null;
@@ -396,111 +211,148 @@ export const useInventory = ({ kitchenId }: UseInventoryProps = {}) => {
         return { success: false, error: 'Product name is required' };
       }
       
-      if (!itemData.category) {
-        return { success: false, error: 'Category is required. Please wait for AI to categorize the product or select manually.' };
-      }
-      
       const token = await AsyncStorage.getItem('authToken');
-      const apiUrl = process.env.EXPO_PUBLIC_API_URL || 'http://192.168.29.65:4000';
 
       if (!token) {
         console.error('No auth token');
         return { success: false, error: 'Not authenticated' };
       }
 
-      // Get or create kitchen
-      const actualKitchenId = kitchenId || await getOrCreateKitchen(token, apiUrl);
+      // Get selected house ID
+      const selectedHouseId = houseId || await AsyncStorage.getItem('selectedHouseId');
       
-      if (!actualKitchenId) {
-        console.error('No kitchen available');
-        return { success: false, error: 'No kitchen available' };
+      if (!selectedHouseId) {
+        console.error('No house selected');
+        return { success: false, error: 'No house selected' };
       }
 
-      console.log('➕ Adding item to kitchen:', actualKitchenId);
+      console.log('➕ Adding item to house:', selectedHouseId, 'with data:', itemData);
 
-      const response = await fetch(`${apiUrl}/graphql`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
+      const data = await NetworkManager.makeGraphQLRequest(`
+        mutation CreateInventoryItem($input: CreateInventoryItemInput!) {
+          createInventoryItem(input: $input) {
+            id
+            name
+            category
+            location
+            quantity
+            unit
+            imageUrl
+            barcode
+            description
+            createdAt
+            updatedAt
+          }
+        }
+      `, {
+        input: {
+          houseId: selectedHouseId,
+          name: itemData.name.trim(),
+          category: itemData.category || null,
+          location: itemData.location || getDefaultLocationForCategory(itemData.category),
+          quantity: itemData.quantity || 1,
+          unit: itemData.unit || 'pieces',
+          imageUrl: itemData.imageUrl || null,
+          barcode: itemData.barcode || null,
+          description: itemData.description || null,
         },
-        body: JSON.stringify({
-          query: `
-            mutation CreateInventoryItem($input: CreateInventoryItemInput!) {
-              createInventoryItem(input: $input) {
-                id
-                name
-                category
-                defaultUnit
-                totalQuantity
-                status
-                createdAt
-              }
-            }
-          `,
-          variables: {
-            input: {
-              kitchenId: actualKitchenId,
-              name: itemData.name.trim(),
-              category: (itemData.category || 'other').toUpperCase(),
-              defaultUnit: itemData.unit || 'pieces',
-              location: 'PANTRY',
-              threshold: 2,
-              tags: [],
-            },
-          },
-        }),
-      });
+      }, token);
 
-      const data = await response.json();
       console.log('➕ Add item response:', JSON.stringify(data, null, 2));
 
       if (data.data?.createInventoryItem) {
-        // Now add a batch for the quantity
-        const itemId = data.data.createInventoryItem.id;
-        
-        const batchResponse = await fetch(`${apiUrl}/graphql`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${token}`,
-          },
-          body: JSON.stringify({
-            query: `
-              mutation CreateInventoryBatch($input: CreateInventoryBatchInput!) {
-                createInventoryBatch(input: $input) {
-                  id
-                  quantity
-                  unit
-                }
-              }
-            `,
-            variables: {
-              input: {
-                itemId: itemId,
-                quantity: itemData.quantity || 1,
-                unit: itemData.unit || 'pieces',
-                purchaseDate: new Date().toISOString(),
-              },
-            },
-          }),
-        });
+        // Add to local state immediately for better UX
+        const newItem = data.data.createInventoryItem;
+        setInventoryItems(prev => [newItem, ...prev]);
+        return { success: true, data: newItem };
+      }
 
-        const batchData = await batchResponse.json();
-        console.log('📦 Add batch response:', JSON.stringify(batchData, null, 2));
+      return { success: false, error: 'Failed to add item' };
+    } catch (error: any) {
+      console.error('Error adding item:', error);
+      return { success: false, error: error.message || 'Network error' };
+    } finally {
+      setAddingItem(false);
+    }
+  };
 
-        // Refresh inventory
-        await fetchInventoryItems();
-        return { success: true };
-      } else if (data.errors) {
-        console.error('GraphQL errors:', data.errors);
-        return { success: false, error: data.errors[0]?.message };
+  const addItems = async (itemsData: Partial<InventoryItem>[]) => {
+    try {
+      setAddingItem(true);
+      
+      // Validate required fields
+      const validItems = itemsData.filter(item => item.name && item.name.trim());
+      if (validItems.length === 0) {
+        return { success: false, error: 'At least one valid item is required' };
       }
       
-      return { success: false, error: 'Unknown error' };
-    } catch (error) {
-      console.error('Error adding item:', error);
-      return { success: false, error };
+      const token = await AsyncStorage.getItem('authToken');
+
+      if (!token) {
+        console.error('No auth token');
+        return { success: false, error: 'Not authenticated' };
+      }
+
+      // Get selected house ID
+      const selectedHouseId = houseId || await AsyncStorage.getItem('selectedHouseId');
+      
+      if (!selectedHouseId) {
+        console.error('No house selected');
+        return { success: false, error: 'No house selected' };
+      }
+
+      console.log('➕ Adding multiple items to house:', selectedHouseId, 'count:', validItems.length);
+
+      const processedItems = validItems.map(item => ({
+        name: item.name!.trim(),
+        category: item.category || null,
+        location: item.location || getDefaultLocationForCategory(item.category),
+        quantity: item.quantity || 1,
+        unit: item.unit || 'pieces',
+        imageUrl: item.imageUrl || null,
+        barcode: item.barcode || null,
+        description: item.description || null,
+      }));
+
+      const data = await NetworkManager.makeGraphQLRequest(`
+        mutation CreateInventoryItems($input: CreateInventoryItemsInput!) {
+          createInventoryItems(input: $input) {
+            count
+            items {
+              id
+              name
+              category
+              location
+              quantity
+              unit
+              imageUrl
+              barcode
+              description
+              createdAt
+              updatedAt
+            }
+          }
+        }
+      `, {
+        input: {
+          houseId: selectedHouseId,
+          items: processedItems,
+        },
+      }, token);
+
+      console.log('➕ Add items response:', JSON.stringify(data, null, 2));
+
+      if (data.data?.createInventoryItems) {
+        const result = data.data.createInventoryItems;
+        // Add to local state immediately for better UX
+        setInventoryItems(prev => [...result.items, ...prev]);
+        return { success: true, data: result };
+      }
+
+      return { success: false, error: 'Failed to add items' };
+    } catch (error: any) {
+      console.error('Error adding items:', error);
+      return { success: false, error: error.message || 'Network error' };
     } finally {
       setAddingItem(false);
     }
@@ -509,62 +361,60 @@ export const useInventory = ({ kitchenId }: UseInventoryProps = {}) => {
   const updateItem = async (id: string, itemData: Partial<InventoryItem>) => {
     try {
       setUpdatingItem(true);
+      
       const token = await AsyncStorage.getItem('authToken');
-      const apiUrl = process.env.EXPO_PUBLIC_API_URL || 'http://192.168.29.65:4000';
 
       if (!token) {
         console.error('No auth token');
         return { success: false, error: 'Not authenticated' };
       }
 
-      console.log('✏️ Updating item:', id, itemData);
+      console.log('✏️ Updating item:', id, 'with data:', itemData);
 
-      const response = await fetch(`${apiUrl}/graphql`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
+      const data = await NetworkManager.makeGraphQLRequest(`
+        mutation UpdateInventoryItem($id: ID!, $input: UpdateInventoryItemInput!) {
+          updateInventoryItem(id: $id, input: $input) {
+            id
+            name
+            category
+            location
+            quantity
+            unit
+            imageUrl
+            barcode
+            description
+            updatedAt
+          }
+        }
+      `, {
+        id,
+        input: {
+          name: itemData.name,
+          category: itemData.category,
+          location: itemData.location,
+          quantity: itemData.quantity,
+          unit: itemData.unit,
+          imageUrl: itemData.imageUrl || null,
+          barcode: itemData.barcode || null,
+          description: itemData.description || null,
         },
-        body: JSON.stringify({
-          query: `
-            mutation UpdateInventoryItem($id: ID!, $input: UpdateInventoryItemInput!) {
-              updateInventoryItem(id: $id, input: $input) {
-                id
-                name
-                category
-                defaultUnit
-                totalQuantity
-                updatedAt
-              }
-            }
-          `,
-          variables: {
-            id,
-            input: {
-              name: itemData.name,
-              category: itemData.category ? itemData.category.toUpperCase() : undefined,
-              defaultUnit: itemData.unit,
-            },
-          },
-        }),
-      });
+      }, token);
 
-      const data = await response.json();
       console.log('✏️ Update item response:', JSON.stringify(data, null, 2));
 
       if (data.data?.updateInventoryItem) {
-        // Refresh inventory to get updated data
-        await fetchInventoryItems();
-        return { success: true };
-      } else if (data.errors) {
-        console.error('GraphQL errors:', data.errors);
-        return { success: false, error: data.errors[0]?.message };
+        // Update local state immediately for better UX
+        const updatedItem = data.data.updateInventoryItem;
+        setInventoryItems(prev => 
+          prev.map(item => item.id === id ? updatedItem : item)
+        );
+        return { success: true, data: updatedItem };
       }
-      
-      return { success: false, error: 'Unknown error' };
-    } catch (error) {
+
+      return { success: false, error: 'Failed to update item' };
+    } catch (error: any) {
       console.error('Error updating item:', error);
-      return { success: false, error };
+      return { success: false, error: error.message || 'Network error' };
     } finally {
       setUpdatingItem(false);
     }
@@ -573,102 +423,69 @@ export const useInventory = ({ kitchenId }: UseInventoryProps = {}) => {
   const deleteItem = async (id: string) => {
     try {
       setDeletingItem(true);
+      
       const token = await AsyncStorage.getItem('authToken');
-      const apiUrl = process.env.EXPO_PUBLIC_API_URL || 'http://192.168.29.65:4000';
 
       if (!token) {
         console.error('No auth token');
         return { success: false, error: 'Not authenticated' };
       }
 
-      const response = await fetch(`${apiUrl}/graphql`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          query: `
-            mutation DeleteInventoryItem($id: ID!) {
-              deleteInventoryItem(id: $id)
-            }
-          `,
-          variables: { id },
-        }),
-      });
+      console.log('🗑️ Deleting item:', id);
 
-      const data = await response.json();
+      const data = await NetworkManager.makeGraphQLRequest(`
+        mutation DeleteInventoryItem($id: ID!) {
+          deleteInventoryItem(id: $id)
+        }
+      `, { id }, token);
+
       console.log('🗑️ Delete item response:', JSON.stringify(data, null, 2));
 
       if (data.data?.deleteInventoryItem) {
-        // Refresh inventory
-        await fetchInventoryItems();
+        // Remove from local state immediately for better UX
+        setInventoryItems(prev => prev.filter(item => item.id !== id));
         return { success: true };
-      } else if (data.errors) {
-        console.error('GraphQL errors:', data.errors);
-        return { success: false, error: data.errors[0]?.message };
       }
-      
-      return { success: false, error: 'Unknown error' };
-    } catch (error) {
+
+      return { success: false, error: 'Failed to delete item' };
+    } catch (error: any) {
       console.error('Error deleting item:', error);
-      return { success: false, error };
+      return { success: false, error: error.message || 'Network error' };
     } finally {
       setDeletingItem(false);
     }
   };
 
-  const refetch = async () => {
+  const refresh = async () => {
     await fetchInventoryItems(true);
-  };
-
-  const searchItems = (query: string) => {
-    setSearchQuery(query);
-  };
-
-  const filterByCategory = (category: string) => {
-    setSelectedCategory(category);
-  };
-
-  const sortItems = (sortType: 'name' | 'expiry' | 'quantity') => {
-    setSortBy(sortType);
   };
 
   return {
     // Data
-    items: filteredItems,
+    inventoryItems: sortedItems,
     allItems: inventoryItems,
-    itemsByStatus,
-    expiringItems,
-    lowStockItems,
-    categories,
-    
-    // State
-    searchQuery,
-    selectedCategory,
-    sortBy,
     loading,
-    error: null, // Mock: no errors for now
+    refreshing,
+    
+    // Filters
+    searchQuery,
+    setSearchQuery,
+    selectedCategory,
+    setSelectedCategory,
+    sortBy,
+    setSortBy,
+    
+    // Actions
+    getItem,
+    addItem,
+    addItems,
+    updateItem,
+    deleteItem,
+    refresh,
     
     // Loading states
     addingItem,
     updatingItem,
     deletingItem,
-    refreshing,
-    
-    // Actions
-    addItem,
-    updateItem,
-    deleteItem,
-    getItem,
-    searchItems,
-    filterByCategory,
-    sortItems,
-    refetch,
-    
-    // Setters
-    setSearchQuery,
-    setSelectedCategory,
-    setSortBy,
   };
 };

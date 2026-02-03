@@ -8,6 +8,7 @@ interface AuthContextType {
   isLoading: boolean;
   isAuthenticated: boolean;
   login: (email: string, password: string) => Promise<{ success: boolean; error?: string }>;
+  googleLogin: (idToken: string) => Promise<{ success: boolean; error?: string }>;
   register: (name: string, email: string, password: string) => Promise<{ success: boolean; error?: string }>;
   logout: () => Promise<void>;
   updateUser: (userData: Partial<User>) => void;
@@ -143,6 +144,67 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     }
   };
 
+  const googleLogin = async (idToken: string) => {
+    try {
+      setIsLoading(true);
+      
+      const data = await makeGraphQLRequest(
+        `
+          mutation GoogleLogin($idToken: String!) {
+            googleLogin(idToken: $idToken) {
+              token
+              user {
+                id
+                name
+                email
+                avatar
+                createdAt
+                updatedAt
+              }
+            }
+          }
+        `,
+        { idToken }
+      );
+      
+      if (data.data?.googleLogin) {
+        const { token, user: userData } = data.data.googleLogin;
+        
+        // Set token expiry to 15 days from now
+        const expiryDate = new Date();
+        expiryDate.setDate(expiryDate.getDate() + 15);
+        
+        await AsyncStorage.multiSet([
+          ['authToken', token],
+          ['userData', JSON.stringify(userData)],
+          ['tokenExpiry', expiryDate.toISOString()]
+        ]);
+        
+        setUser(userData);
+        console.log('Google login successful:', userData.email);
+        return { success: true };
+      } else if (data.errors) {
+        console.log('GraphQL errors:', data.errors);
+        const error = data.errors[0];
+        let errorMessage = error?.message || 'Google login failed';
+        
+        // Use the user-friendly message if available
+        if (error?.extensions?.userMessage) {
+          errorMessage = error.extensions.userMessage;
+        }
+        
+        return { success: false, error: errorMessage };
+      }
+      
+      return { success: false, error: 'Google authentication failed' };
+    } catch (error) {
+      console.error('Google login error:', error);
+      return { success: false, error: 'Network error. Please check your connection and try again.' };
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const register = async (name: string, email: string, password: string) => {
     try {
       setIsLoading(true);
@@ -231,9 +293,20 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const logout = async () => {
     try {
       setIsLoading(true);
-      await AsyncStorage.multiRemove(['authToken', 'userData', 'tokenExpiry']);
+      console.log('🚪 Logging out user...');
+      
+      // Clear all authentication and app data
+      await AsyncStorage.multiRemove([
+        'authToken', 
+        'userData', 
+        'tokenExpiry',
+        'selectedHouseId',
+        'selectedHouseName',
+        'selectedHouse'
+      ]);
+      
       setUser(null);
-      console.log('Logout successful');
+      console.log('✅ Logout successful - all data cleared');
     } catch (error) {
       console.error('Logout error:', error);
     } finally {
@@ -260,6 +333,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     isLoading,
     isAuthenticated: !!user,
     login,
+    googleLogin,
     register,
     logout,
     updateUser,

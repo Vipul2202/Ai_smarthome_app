@@ -13,7 +13,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { router, useFocusEffect } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useTheme } from '@/providers/ThemeProvider';
-import { useHouse } from '@/contexts/HouseContext';
+import { useHouse } from '@/hooks/useHouse';
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
 import { SmartHomeLoading } from '@/components/ui/SmartHomeLoading';
 import AsyncStorage from '@react-native-async-storage/async-storage';

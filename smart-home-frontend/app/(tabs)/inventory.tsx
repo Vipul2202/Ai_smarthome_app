@@ -246,15 +246,6 @@ export default function InventoryScreen() {
         return;
       }
 
-      // Get cached kitchen ID
-      const cachedKitchenKey = `kitchen_${selectedHouseId}`;
-      const kitchenId = await AsyncStorage.getItem(cachedKitchenKey);
-
-      if (!kitchenId) {
-        Alert.alert('Error', 'Kitchen not found');
-        return;
-      }
-
       const response = await fetch(`${apiUrl}/graphql`, {
         method: 'POST',
         headers: {
@@ -263,19 +254,19 @@ export default function InventoryScreen() {
         },
         body: JSON.stringify({
           query: `
-            query SearchInventoryByVoice($kitchenId: ID!, $searchTerm: String!) {
-              searchInventoryByVoice(kitchenId: $kitchenId, searchTerm: $searchTerm) {
+            query SearchInventoryByVoice($houseId: ID!, $searchTerm: String!) {
+              searchInventoryByVoice(houseId: $houseId, searchTerm: $searchTerm) {
                 id
                 name
                 category
-                totalQuantity
-                defaultUnit
+                quantity
+                unit
                 location
                 similarity
               }
             }
           `,
-          variables: { kitchenId, searchTerm },
+          variables: { houseId: selectedHouseId, searchTerm },
         }),
       });
 
@@ -356,30 +347,87 @@ export default function InventoryScreen() {
 
   // Play audio from base64 data
   const playAudioFromBase64 = async (base64Data: string) => {
+    if (!base64Data) {
+      console.log('⚠️ No audio data provided');
+      return;
+    }
+
     try {
       const { Audio } = require('expo-av');
-      const { sound } = await Audio.Sound.createAsync(
-        { uri: `data:audio/mp3;base64,${base64Data}` },
-        { shouldPlay: true }
-      );
       
-      // Wait for the audio to finish playing
-      return new Promise<void>((resolve) => {
-        sound.setOnPlaybackStatusUpdate((status: any) => {
-          if (status.isLoaded && status.didJustFinish) {
-            sound.unloadAsync();
-            resolve();
-          }
-        });
+      // Set audio mode for better compatibility
+      await Audio.setAudioModeAsync({
+        allowsRecordingIOS: false,
+        staysActiveInBackground: false,
+        playsInSilentModeIOS: true,
+        shouldDuckAndroid: true,
+        playThroughEarpieceAndroid: false,
       });
+
+      // Try different audio formats in order of preference
+      const formats = [
+        { mime: 'audio/wav', ext: 'wav' },
+        { mime: 'audio/mp3', ext: 'mp3' },
+        { mime: 'audio/mpeg', ext: 'mp3' },
+        { mime: 'audio/ogg', ext: 'ogg' }
+      ];
+
+      for (const format of formats) {
+        try {
+          console.log(`🎵 Attempting to play audio as ${format.ext}...`);
+          
+          const { sound } = await Audio.Sound.createAsync(
+            { uri: `data:${format.mime};base64,${base64Data}` },
+            { 
+              shouldPlay: true,
+              progressUpdateIntervalMillis: 100,
+              positionMillis: 0,
+              volume: 0.8,
+              rate: 1.0,
+              shouldCorrectPitch: true,
+            }
+          );
+
+          return new Promise<void>((resolve, reject) => {
+            const timeout = setTimeout(() => {
+              sound.unloadAsync();
+              resolve();
+            }, 10000); // 10 second timeout
+
+            sound.setOnPlaybackStatusUpdate((status: any) => {
+              if (status.isLoaded) {
+                if (status.didJustFinish) {
+                  clearTimeout(timeout);
+                  sound.unloadAsync();
+                  console.log(`✅ Audio played successfully as ${format.ext}`);
+                  resolve();
+                } else if (status.error) {
+                  clearTimeout(timeout);
+                  console.log(`❌ Audio playback error with ${format.ext}:`, status.error);
+                  sound.unloadAsync();
+                  reject(new Error(status.error));
+                }
+              }
+            });
+          });
+        } catch (formatError) {
+          console.log(`❌ Failed to play as ${format.ext}, trying next format...`);
+          continue;
+        }
+      }
+      
+      // If all formats fail, log but don't break the flow
+      console.log('⚠️ All audio formats failed, continuing without audio');
+      
     } catch (error) {
-      console.error('Error playing audio:', error);
+      console.error('Error in audio playback:', error);
+      // Silently fail - don't break the voice flow
     }
   };
 
   const handleUpdateItem = (item: any) => {
     setSelectedItemForUpdate(item);
-    setUpdateQuantity(item.totalQuantity.toString());
+    setUpdateQuantity(item.quantity.toString());
     setShowUpdateModal(true);
   };
 
@@ -397,15 +445,6 @@ export default function InventoryScreen() {
         return;
       }
 
-      // Get cached kitchen ID
-      const cachedKitchenKey = `kitchen_${selectedHouseId}`;
-      const kitchenId = await AsyncStorage.getItem(cachedKitchenKey);
-
-      if (!kitchenId) {
-        Alert.alert('Error', 'Kitchen not found');
-        return;
-      }
-
       const response = await fetch(`${apiUrl}/graphql`, {
         method: 'POST',
         headers: {
@@ -414,21 +453,21 @@ export default function InventoryScreen() {
         },
         body: JSON.stringify({
           query: `
-            mutation UpdateInventoryByVoice($kitchenId: ID!, $itemName: String!, $quantity: Float!) {
-              updateInventoryByVoice(kitchenId: $kitchenId, itemName: $itemName, quantity: $quantity) {
+            mutation UpdateInventoryByVoice($houseId: ID!, $itemName: String!, $quantity: Float!) {
+              updateInventoryByVoice(houseId: $houseId, itemName: $itemName, quantity: $quantity) {
                 success
                 message
                 item {
                   id
                   name
-                  totalQuantity
-                  defaultUnit
+                  quantity
+                  unit
                 }
               }
             }
           `,
           variables: {
-            kitchenId,
+            houseId: selectedHouseId,
             itemName: selectedItemForUpdate.name,
             quantity: parseFloat(updateQuantity),
           },
@@ -1332,7 +1371,7 @@ export default function InventoryScreen() {
                           {item.name}
                         </Text>
                         <Text style={{ fontSize: 14, color: colors.textSecondary }}>
-                          {item.totalQuantity} {item.defaultUnit} • {item.category} • {item.location}
+                          {item.quantity} {item.unit} • {item.category} • {item.location}
                         </Text>
                         {/* Show match type indicator */}
                         <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}>
@@ -1480,7 +1519,7 @@ export default function InventoryScreen() {
                         {selectedItemForUpdate.name}
                       </Text>
                       <Text style={{ fontSize: 14, color: colors.textSecondary }}>
-                        Current: {selectedItemForUpdate.totalQuantity} {selectedItemForUpdate.defaultUnit}
+                        Current: {selectedItemForUpdate.quantity} {selectedItemForUpdate.unit}
                       </Text>
                     </View>
                   </View>

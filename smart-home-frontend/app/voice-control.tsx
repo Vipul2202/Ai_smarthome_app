@@ -21,6 +21,7 @@ import { useTheme } from '@/providers/ThemeProvider';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useLocalVoiceRecording } from '@/hooks/useLocalVoiceRecording';
 import { Audio } from 'expo-av';
+import { NetworkManager } from '@/lib/network';
 
 interface VoiceResult {
   intent: 'ADD' | 'UPDATE' | 'SEARCH' | 'DELETE' | 'UNKNOWN';
@@ -39,8 +40,8 @@ interface SearchResult {
   id: string;
   name: string;
   category: string;
-  totalQuantity: number;
-  defaultUnit: string;
+  quantity: number;
+  unit: string;
   location: string;
   similarity: number;
 }
@@ -159,184 +160,60 @@ export default function VoiceControlScreen() {
     return null;
   };
 
-  // Add item function without using useInventory hook
+  // Add item function using new house-based system
   const addItemToInventory = async (itemData: any) => {
     try {
       const token = await AsyncStorage.getItem('authToken');
-      const apiUrl = process.env.EXPO_PUBLIC_API_URL || 'http://192.168.29.65:4000';
 
-      // Get or create kitchen
+      // Get selected house ID directly
       const selectedHouseId = await AsyncStorage.getItem('selectedHouseId');
-      const selectedHouseName = await AsyncStorage.getItem('selectedHouseName');
       
-      if (!selectedHouseId || !selectedHouseName) {
-        throw new Error('No house selected');
+      if (!selectedHouseId) {
+        throw new Error('No house selected. Please select a house first.');
       }
 
-      // Check if we have a cached kitchen ID for this house
-      const cachedKitchenKey = `kitchen_${selectedHouseId}`;
-      const cachedKitchenId = await AsyncStorage.getItem(cachedKitchenKey);
-      
-      let kitchenId = cachedKitchenId;
+      console.log('➕ Adding item to house:', selectedHouseId);
 
-      if (!kitchenId) {
-        // Get kitchen ID
-        const kitchenResponse = await fetch(`${apiUrl}/graphql`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${token}`,
-          },
-          body: JSON.stringify({
-            query: `
-              query GetHouseholds {
-                households {
-                  id
-                  name
-                  kitchens {
-                    id
-                    name
-                  }
-                }
-              }
-            `,
-          }),
-        });
-
-        const kitchenData = await kitchenResponse.json();
-        const household = kitchenData.data?.households?.find((h: any) => h.name === selectedHouseName);
-        kitchenId = household?.kitchens?.[0]?.id;
-
-        // Create household and kitchen if needed
-        if (!kitchenId) {
-          let householdId = household?.id;
-          
-          if (!householdId) {
-            const createHouseholdResponse = await fetch(`${apiUrl}/graphql`, {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${token}`,
-              },
-              body: JSON.stringify({
-                query: `
-                  mutation CreateHousehold($input: CreateHouseholdInput!) {
-                    createHousehold(input: $input) {
-                      id
-                    }
-                  }
-                `,
-                variables: {
-                  input: {
-                    name: selectedHouseName,
-                    description: `Household for ${selectedHouseName}`,
-                  },
-                },
-              }),
-            });
-
-            const householdResult = await createHouseholdResponse.json();
-            householdId = householdResult.data?.createHousehold?.id;
+      // Create inventory item directly using house-based system
+      const data = await NetworkManager.makeGraphQLRequest(`
+        mutation CreateInventoryItem($input: CreateInventoryItemInput!) {
+          createInventoryItem(input: $input) {
+            id
+            name
+            category
+            location
+            quantity
+            unit
+            imageUrl
+            barcode
+            description
+            createdAt
+            updatedAt
           }
-
-          if (householdId) {
-            const createKitchenResponse = await fetch(`${apiUrl}/graphql`, {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${token}`,
-              },
-              body: JSON.stringify({
-                query: `
-                  mutation CreateKitchen($input: CreateKitchenInput!) {
-                    createKitchen(input: $input) {
-                      id
-                    }
-                  }
-                `,
-                variables: {
-                  input: {
-                    householdId: householdId,
-                    name: `${selectedHouseName} Kitchen`,
-                    description: `Main kitchen for ${selectedHouseName}`,
-                    type: 'HOME',
-                  },
-                },
-              }),
-            });
-
-            const kitchenResult = await createKitchenResponse.json();
-            kitchenId = kitchenResult.data?.createKitchen?.id;
-            
-            // Cache the kitchen ID
-            if (kitchenId) {
-              await AsyncStorage.setItem(cachedKitchenKey, kitchenId);
-            }
-          }
-        } else {
-          // Cache the found kitchen ID
-          await AsyncStorage.setItem(cachedKitchenKey, kitchenId);
         }
-      }
-
-      if (!kitchenId) {
-        throw new Error('Failed to get or create kitchen');
-      }
-
-      // Smart add inventory item (will update existing or create new)
-      const response = await fetch(`${apiUrl}/graphql`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
+      `, {
+        input: {
+          houseId: selectedHouseId,
+          name: itemData.name,
+          category: itemData.category || null,
+          location: itemData.location || null,
+          quantity: itemData.quantity || 1,
+          unit: itemData.unit || 'pieces',
+          imageUrl: null,
+          barcode: null,
+          description: null,
         },
-        body: JSON.stringify({
-          query: `
-            mutation SmartAddInventoryItem($input: SmartAddInventoryItemInput!) {
-              smartAddInventoryItem(input: $input) {
-                success
-                action
-                message
-                item {
-                  id
-                  name
-                  category
-                  defaultUnit
-                  location
-                }
-                addedQuantity
-                totalQuantity
-              }
-            }
-          `,
-          variables: {
-            input: {
-              kitchenId: kitchenId,
-              name: itemData.name,
-              quantity: itemData.quantity,
-              unit: itemData.unit || 'pieces',
-              category: itemData.category || 'other',
-              location: itemData.location || 'pantry',
-            },
-          },
-        }),
-      });
+      }, token);
 
-      const data = await response.json();
-
-      if (data.errors) {
-        throw new Error(data.errors[0]?.message || 'Failed to add item');
-      }
-
-      const result = data.data?.smartAddInventoryItem;
-      if (result?.success) {
+      const result = data.data?.createInventoryItem;
+      if (result) {
         return { 
           success: true, 
-          data: result.item,
-          action: result.action,
-          message: result.message,
-          addedQuantity: result.addedQuantity,
-          totalQuantity: result.totalQuantity
+          data: result,
+          action: 'CREATED',
+          message: `Added ${itemData.name} to your inventory`,
+          addedQuantity: itemData.quantity || 1,
+          quantity: itemData.quantity || 1
         };
       } else {
         throw new Error('Failed to add item to inventory');
@@ -441,41 +318,32 @@ export default function VoiceControlScreen() {
     try {
       setProcessingCommand(true);
       const token = await AsyncStorage.getItem('authToken');
-      const apiUrl = process.env.EXPO_PUBLIC_API_URL || 'http://192.168.29.65:4000';
+      const selectedHouseId = await AsyncStorage.getItem('selectedHouseId');
+
+      if (!selectedHouseId) {
+        throw new Error('No house selected. Please select a house first.');
+      }
 
       // Process voice intent with new AI service
-      const response = await fetch(`${apiUrl}/graphql`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          query: `
-            mutation ProcessVoiceIntent($transcript: String!) {
-              processVoiceIntent(transcript: $transcript) {
-                intent
-                item {
-                  name
-                  quantity
-                  unit
-                  category
-                  location
-                }
-                confidence
-                missingInfo
-              }
+      const data = await NetworkManager.makeGraphQLRequest(`
+        mutation ProcessVoiceIntent($transcript: String!, $houseId: ID!) {
+          processVoiceIntent(transcript: $transcript, houseId: $houseId) {
+            intent
+            item {
+              name
+              quantity
+              unit
+              category
+              location
             }
-          `,
-          variables: { transcript: text },
-        }),
-      });
-
-      const data = await response.json();
-
-      if (data.errors) {
-        throw new Error(data.errors[0]?.message || 'Failed to process command');
-      }
+            confidence
+            missingInfo
+          }
+        }
+      `, { 
+        transcript: text,
+        houseId: selectedHouseId
+      }, token);
 
       if (data.data?.processVoiceIntent) {
         const result = data.data.processVoiceIntent;
@@ -846,51 +714,26 @@ export default function VoiceControlScreen() {
       setSearchQuery(searchTerm);
       
       const token = await AsyncStorage.getItem('authToken');
-      const apiUrl = process.env.EXPO_PUBLIC_API_URL || 'http://192.168.29.65:4000';
       const selectedHouseId = await AsyncStorage.getItem('selectedHouseId');
       
       if (!selectedHouseId) {
         throw new Error('No house selected');
       }
 
-      // Get cached kitchen ID
-      const cachedKitchenKey = `kitchen_${selectedHouseId}`;
-      const kitchenId = await AsyncStorage.getItem(cachedKitchenKey);
-      
-      if (!kitchenId) {
-        throw new Error('Kitchen not found');
-      }
-
-      // Search for items
-      const response = await fetch(`${apiUrl}/graphql`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          query: `
-            query SearchInventoryByVoice($kitchenId: ID!, $searchTerm: String!) {
-              searchInventoryByVoice(kitchenId: $kitchenId, searchTerm: $searchTerm) {
-                id
-                name
-                category
-                totalQuantity
-                defaultUnit
-                location
-                similarity
-              }
-            }
-          `,
-          variables: { kitchenId, searchTerm },
-        }),
-      });
-
-      const data = await response.json();
-
-      if (data.errors) {
-        throw new Error(data.errors[0]?.message || 'Failed to search items');
-      }
+      // Search for items using house-based system
+      const data = await NetworkManager.makeGraphQLRequest(`
+        query SearchInventoryByVoice($houseId: ID!, $searchTerm: String!) {
+          searchInventoryByVoice(houseId: $houseId, searchTerm: $searchTerm) {
+            id
+            name
+            category
+            quantity
+            unit
+            location
+            similarity
+          }
+        }
+      `, { houseId: selectedHouseId, searchTerm }, token);
 
       const results = data.data?.searchInventoryByVoice || [];
       console.log('🔍 Search results:', results);
@@ -933,29 +776,17 @@ export default function VoiceControlScreen() {
       setSpeechInProgress(true);
       
       const token = await AsyncStorage.getItem('authToken');
-      const apiUrl = process.env.EXPO_PUBLIC_API_URL || 'http://192.168.29.65:4000';
 
       // Use the new simple speech mutation that doesn't add "some information missing" prefix
-      const response = await fetch(`${apiUrl}/graphql`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          query: `
-            mutation GenerateSimpleSpeech($text: String!) {
-              generateSimpleSpeech(text: $text) {
-                success
-                speechData
-              }
-            }
-          `,
-          variables: { text: message },
-        }),
-      });
+      const data = await NetworkManager.makeGraphQLRequest(`
+        mutation GenerateSimpleSpeech($text: String!) {
+          generateSimpleSpeech(text: $text) {
+            success
+            speechData
+          }
+        }
+      `, { text: message }, token);
 
-      const data = await response.json();
       const result = data.data?.generateSimpleSpeech;
       
       if (result?.success && result.speechData) {
@@ -1001,15 +832,7 @@ export default function VoiceControlScreen() {
         throw new Error('No house selected');
       }
 
-      // Get cached kitchen ID
-      const cachedKitchenKey = `kitchen_${selectedHouseId}`;
-      const kitchenId = await AsyncStorage.getItem(cachedKitchenKey);
-      
-      if (!kitchenId) {
-        throw new Error('Kitchen not found');
-      }
-
-      // Search for the item first
+      // Search for the item using house-based system
       const response = await fetch(`${apiUrl}/graphql`, {
         method: 'POST',
         headers: {
@@ -1018,19 +841,19 @@ export default function VoiceControlScreen() {
         },
         body: JSON.stringify({
           query: `
-            query SearchInventoryByVoice($kitchenId: ID!, $searchTerm: String!) {
-              searchInventoryByVoice(kitchenId: $kitchenId, searchTerm: $searchTerm) {
+            query SearchInventoryByVoice($houseId: ID!, $searchTerm: String!) {
+              searchInventoryByVoice(houseId: $houseId, searchTerm: $searchTerm) {
                 id
                 name
                 category
-                totalQuantity
-                defaultUnit
+                quantity
+                unit
                 location
                 similarity
               }
             }
           `,
-          variables: { kitchenId, searchTerm: itemName },
+          variables: { houseId: selectedHouseId, searchTerm: itemName },
         }),
       });
 
@@ -1079,15 +902,7 @@ export default function VoiceControlScreen() {
         throw new Error('No house selected');
       }
 
-      // Get cached kitchen ID
-      const cachedKitchenKey = `kitchen_${selectedHouseId}`;
-      const kitchenId = await AsyncStorage.getItem(cachedKitchenKey);
-      
-      if (!kitchenId) {
-        throw new Error('Kitchen not found');
-      }
-
-      // Search for the item first
+      // Search for the item using house-based system
       const response = await fetch(`${apiUrl}/graphql`, {
         method: 'POST',
         headers: {
@@ -1096,19 +911,19 @@ export default function VoiceControlScreen() {
         },
         body: JSON.stringify({
           query: `
-            query SearchInventoryByVoice($kitchenId: ID!, $searchTerm: String!) {
-              searchInventoryByVoice(kitchenId: $kitchenId, searchTerm: $searchTerm) {
+            query SearchInventoryByVoice($houseId: ID!, $searchTerm: String!) {
+              searchInventoryByVoice(houseId: $houseId, searchTerm: $searchTerm) {
                 id
                 name
                 category
-                totalQuantity
-                defaultUnit
+                quantity
+                unit
                 location
                 similarity
               }
             }
           `,
-          variables: { kitchenId, searchTerm: itemName },
+          variables: { houseId: selectedHouseId, searchTerm: itemName },
         }),
       });
 
@@ -1142,55 +957,33 @@ export default function VoiceControlScreen() {
     try {
       setAddingToInventory(true);
       const token = await AsyncStorage.getItem('authToken');
-      const apiUrl = process.env.EXPO_PUBLIC_API_URL || 'http://192.168.29.65:4000';
       const selectedHouseId = await AsyncStorage.getItem('selectedHouseId');
       
       if (!selectedHouseId) {
         throw new Error('No house selected');
       }
 
-      // Get cached kitchen ID
-      const cachedKitchenKey = `kitchen_${selectedHouseId}`;
-      const kitchenId = await AsyncStorage.getItem(cachedKitchenKey);
-      
-      if (!kitchenId) {
-        throw new Error('Kitchen not found');
-      }
-
-      const response = await fetch(`${apiUrl}/graphql`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          query: `
-            mutation UpdateInventoryByVoice($kitchenId: ID!, $itemName: String!, $quantity: Float!) {
-              updateInventoryByVoice(kitchenId: $kitchenId, itemName: $itemName, quantity: $quantity) {
-                success
-                message
-                item {
-                  id
-                  name
-                  totalQuantity
-                  defaultUnit
-                }
-              }
+      const data = await NetworkManager.makeGraphQLRequest(`
+        mutation UpdateInventoryByVoice($houseId: ID!, $itemName: String!, $quantity: Float!) {
+          updateInventoryByVoice(houseId: $houseId, itemName: $itemName, quantity: $quantity) {
+            success
+            message
+            item {
+              id
+              name
+              category
+              quantity
+              unit
+              location
+              similarity
             }
-          `,
-          variables: {
-            kitchenId,
-            itemName: selectedUpdateItem.name,
-            quantity: parseFloat(updateQuantity),
-          },
-        }),
-      });
-
-      const data = await response.json();
-
-      if (data.errors) {
-        throw new Error(data.errors[0]?.message || 'Failed to update item');
-      }
+          }
+        }
+      `, {
+        houseId: selectedHouseId,
+        itemName: selectedUpdateItem.name,
+        quantity: parseFloat(updateQuantity),
+      }, token);
 
       const result = data.data?.updateInventoryByVoice;
       if (result?.success) {
@@ -1307,9 +1100,6 @@ export default function VoiceControlScreen() {
       return;
     }
     
-    // REMOVED: Don't check waitingForMissingInfo here since it's set asynchronously
-    // The fact that this function is called means we need missing info speech
-    
     // Prevent multiple speech generations
     if (isGeneratingSpeech || playingAudio) {
       console.log('🔄 Speech already generating or playing, skipping...');
@@ -1331,33 +1121,15 @@ export default function VoiceControlScreen() {
       }
       
       const token = await AsyncStorage.getItem('authToken');
-      const apiUrl = process.env.EXPO_PUBLIC_API_URL || 'http://192.168.29.65:4000';
 
-      const response = await fetch(`${apiUrl}/graphql`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          query: `
-            mutation GenerateMissingInfoSpeech($missingInfo: [String!]!) {
-              generateMissingInfoSpeech(missingInfo: $missingInfo) {
-                success
-                speechData
-              }
-            }
-          `,
-          variables: { missingInfo },
-        }),
-      });
-
-      const data = await response.json();
-
-      if (data.errors) {
-        console.error('🚨 GraphQL errors:', data.errors);
-        throw new Error(data.errors[0]?.message || 'Failed to generate speech');
-      }
+      const data = await NetworkManager.makeGraphQLRequest(`
+        mutation GenerateMissingInfoSpeech($missingInfo: [String!]!) {
+          generateMissingInfoSpeech(missingInfo: $missingInfo) {
+            success
+            speechData
+          }
+        }
+      `, { missingInfo }, token);
 
       const result = data.data?.generateMissingInfoSpeech;
       
@@ -1392,23 +1164,79 @@ export default function VoiceControlScreen() {
 
   // Play audio from base64 data
   const playAudioFromBase64 = async (base64Data: string) => {
+    if (!base64Data) {
+      console.log('⚠️ No audio data provided');
+      return;
+    }
+
     try {
-      const { sound } = await Audio.Sound.createAsync(
-        { uri: `data:audio/mp3;base64,${base64Data}` },
-        { shouldPlay: true }
-      );
-      
-      // Wait for the audio to finish playing
-      return new Promise<void>((resolve) => {
-        sound.setOnPlaybackStatusUpdate((status) => {
-          if (status.isLoaded && status.didJustFinish) {
-            sound.unloadAsync();
-            resolve();
-          }
-        });
+      // Set audio mode for better compatibility
+      await Audio.setAudioModeAsync({
+        allowsRecordingIOS: false,
+        staysActiveInBackground: false,
+        playsInSilentModeIOS: true,
+        shouldDuckAndroid: true,
+        playThroughEarpieceAndroid: false,
       });
+
+      // Try different audio formats in order of preference
+      const formats = [
+        { mime: 'audio/wav', ext: 'wav' },
+        { mime: 'audio/mp3', ext: 'mp3' },
+        { mime: 'audio/mpeg', ext: 'mp3' },
+        { mime: 'audio/ogg', ext: 'ogg' }
+      ];
+
+      for (const format of formats) {
+        try {
+          console.log(`🎵 Attempting to play audio as ${format.ext}...`);
+          
+          const { sound } = await Audio.Sound.createAsync(
+            { uri: `data:${format.mime};base64,${base64Data}` },
+            { 
+              shouldPlay: true,
+              progressUpdateIntervalMillis: 100,
+              positionMillis: 0,
+              volume: 0.8,
+              rate: 1.0,
+              shouldCorrectPitch: true,
+            }
+          );
+
+          return new Promise<void>((resolve, reject) => {
+            const timeout = setTimeout(() => {
+              sound.unloadAsync();
+              resolve();
+            }, 10000); // 10 second timeout
+
+            sound.setOnPlaybackStatusUpdate((status) => {
+              if (status.isLoaded) {
+                if (status.didJustFinish) {
+                  clearTimeout(timeout);
+                  sound.unloadAsync();
+                  console.log(`✅ Audio played successfully as ${format.ext}`);
+                  resolve();
+                } else if (status.error) {
+                  clearTimeout(timeout);
+                  console.log(`❌ Audio playback error with ${format.ext}:`, status.error);
+                  sound.unloadAsync();
+                  reject(new Error(status.error));
+                }
+              }
+            });
+          });
+        } catch (formatError) {
+          console.log(`❌ Failed to play as ${format.ext}, trying next format...`);
+          continue;
+        }
+      }
+      
+      // If all formats fail, log but don't break the flow
+      console.log('⚠️ All audio formats failed, continuing without audio');
+      
     } catch (error) {
-      console.error('Error playing audio:', error);
+      console.error('Error in audio playback:', error);
+      // Silently fail - don't break the voice flow
     }
   };
 
@@ -2468,7 +2296,7 @@ export default function VoiceControlScreen() {
                           {item.name}
                         </Text>
                         <Text style={{ fontSize: 14, color: colors.textSecondary }}>
-                          {item.totalQuantity} {item.defaultUnit} • {item.category}
+                          {item.quantity} {item.unit} • {item.category}
                         </Text>
                         {/* Show match type indicator */}
                         <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}>
@@ -2699,7 +2527,7 @@ export default function VoiceControlScreen() {
                         color: colors.text, 
                         fontWeight: 'bold',
                       }}>
-                        {selectedUpdateItem.totalQuantity} {selectedUpdateItem.defaultUnit}
+                        {selectedUpdateItem.quantity} {selectedUpdateItem.unit}
                       </Text>
                     </View>
                     <Ionicons name="arrow-forward" size={20} color={colors.textSecondary} />
@@ -2875,7 +2703,7 @@ export default function VoiceControlScreen() {
                         {selectedDeleteItem.name}
                       </Text>
                       <Text style={{ fontSize: 14, color: colors.textSecondary }}>
-                        {selectedDeleteItem.totalQuantity} {selectedDeleteItem.defaultUnit} • {selectedDeleteItem.category}
+                        {selectedDeleteItem.quantity} {selectedDeleteItem.unit} • {selectedDeleteItem.category}
                       </Text>
                     </View>
                   </View>
