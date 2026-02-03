@@ -453,44 +453,50 @@ function categorizeByRules(productName: string): {
 } {
   const name = productName.toLowerCase().trim();
   
+  // Eggs and dairy first (before other categories)
+  const eggs = ['egg', 'eggs', 'chicken egg', 'duck egg', 'quail egg'];
+  if (eggs.some(e => name.includes(e))) {
+    return { category: 'dairy', confidence: 0.95, reasoning: 'Eggs are classified under dairy/protein' };
+  }
+  
   // Check for snacks first (before vegetables) to catch things like "potato chips"
   const snacks = ['chips', 'cookies', 'crackers', 'nuts', 'candy', 'chocolate', 'popcorn', 'pretzels', 'granola bar', 'trail mix', 'almonds', 'peanuts', 'cashews', 'walnuts', 'pistachios', 'pecans', 'hazelnuts', 'macadamia', 'sunflower seeds', 'pumpkin seeds', 'potato chips', 'corn chips', 'tortilla chips'];
   if (snacks.some(s => name.includes(s))) {
     return { category: 'snacks', confidence: 0.9, reasoning: 'Matched snack keywords' };
   }
   
-  // Fruits
-  const fruits = ['apple', 'banana', 'orange', 'grape', 'strawberry', 'mango', 'pineapple', 'watermelon', 'melon', 'kiwi', 'peach', 'pear', 'cherry', 'plum', 'avocado', 'lemon', 'lime', 'coconut', 'papaya', 'berries', 'blueberry', 'raspberry', 'blackberry', 'cranberry', 'pomegranate', 'guava', 'passion fruit', 'dragon fruit', 'lychee'];
-  if (fruits.some(fruit => name.includes(fruit))) {
+  // Fruits - be more specific to avoid false matches
+  const fruits = ['apple', 'banana', 'orange', 'grape', 'strawberry', 'mango', 'pineapple', 'watermelon', 'cantaloupe', 'honeydew', 'kiwi', 'peach', 'pear', 'cherry', 'plum', 'avocado', 'lemon', 'lime', 'coconut', 'papaya', 'blueberry', 'raspberry', 'blackberry', 'cranberry', 'pomegranate', 'guava', 'passion fruit', 'dragon fruit', 'lychee', 'fig', 'date', 'apricot', 'nectarine'];
+  if (fruits.some(fruit => name === fruit || name.startsWith(fruit + ' ') || name.endsWith(' ' + fruit))) {
     return { category: 'fruits', confidence: 0.9, reasoning: 'Matched fruit keywords' };
   }
   
-  // Vegetables
-  const vegetables = ['tomato', 'onion', 'potato', 'carrot', 'broccoli', 'spinach', 'lettuce', 'cucumber', 'pepper', 'garlic', 'ginger', 'celery', 'cabbage', 'cauliflower', 'mushroom', 'corn', 'peas', 'beans', 'radish', 'beetroot', 'turnip', 'eggplant', 'zucchini', 'squash', 'okra', 'asparagus', 'artichoke', 'leek', 'scallion', 'chili', 'jalapeno', 'bell pepper', 'sweet potato'];
-  if (vegetables.some(veg => name.includes(veg))) {
+  // Vegetables - be more specific
+  const vegetables = ['tomato', 'onion', 'potato', 'carrot', 'broccoli', 'spinach', 'lettuce', 'cucumber', 'pepper', 'garlic', 'ginger', 'celery', 'cabbage', 'cauliflower', 'mushroom', 'corn', 'peas', 'beans', 'radish', 'beetroot', 'turnip', 'eggplant', 'zucchini', 'squash', 'okra', 'asparagus', 'artichoke', 'leek', 'scallion', 'chili', 'jalapeno', 'bell pepper', 'sweet potato', 'kale', 'chard', 'arugula'];
+  if (vegetables.some(veg => name === veg || name.startsWith(veg + ' ') || name.endsWith(' ' + veg))) {
     return { category: 'vegetables', confidence: 0.9, reasoning: 'Matched vegetable keywords' };
   }
   
-  // Dairy
-  const dairy = ['milk', 'cheese', 'yogurt', 'yoghurt', 'butter', 'cream', 'ice cream', 'cottage cheese', 'mozzarella', 'cheddar', 'parmesan', 'ricotta', 'feta', 'goat cheese', 'swiss', 'brie', 'camembert', 'sour cream', 'whipped cream', 'half and half'];
+  // Dairy - more comprehensive
+  const dairy = ['milk', 'cheese', 'yogurt', 'yoghurt', 'butter', 'cream', 'ice cream', 'cottage cheese', 'mozzarella', 'cheddar', 'parmesan', 'ricotta', 'feta', 'goat cheese', 'swiss', 'brie', 'camembert', 'sour cream', 'whipped cream', 'half and half', 'heavy cream', 'buttermilk'];
   if (dairy.some(d => name.includes(d))) {
     return { category: 'dairy', confidence: 0.9, reasoning: 'Matched dairy keywords' };
   }
   
-  // Meat & Fish
-  const meat = ['chicken', 'beef', 'pork', 'lamb', 'fish', 'salmon', 'tuna', 'shrimp', 'crab', 'lobster', 'turkey', 'duck', 'bacon', 'ham', 'sausage', 'ground beef', 'steak', 'ribs', 'wings', 'thigh', 'breast', 'cod', 'tilapia', 'mahi', 'halibut', 'trout', 'sardines', 'anchovies', 'scallops', 'mussels', 'clams', 'oysters'];
+  // Meat & Fish - more comprehensive
+  const meat = ['chicken', 'beef', 'pork', 'lamb', 'fish', 'salmon', 'tuna', 'shrimp', 'crab', 'lobster', 'turkey', 'duck', 'bacon', 'ham', 'sausage', 'ground beef', 'steak', 'ribs', 'wings', 'thigh', 'breast', 'cod', 'tilapia', 'mahi', 'halibut', 'trout', 'sardines', 'anchovies', 'scallops', 'mussels', 'clams', 'oysters', 'ground turkey', 'ground chicken'];
   if (meat.some(m => name.includes(m))) {
     return { category: 'meat', confidence: 0.9, reasoning: 'Matched meat/fish keywords' };
   }
   
   // Grains & Cereals
-  const grains = ['rice', 'bread', 'pasta', 'noodles', 'cereal', 'oats', 'quinoa', 'barley', 'wheat', 'flour', 'crackers', 'bagel', 'tortilla', 'pita', 'couscous', 'bulgur', 'millet', 'buckwheat', 'rye', 'cornmeal', 'polenta', 'grits', 'bran', 'granola'];
+  const grains = ['rice', 'bread', 'pasta', 'noodles', 'cereal', 'oats', 'quinoa', 'barley', 'wheat', 'flour', 'bagel', 'tortilla', 'pita', 'couscous', 'bulgur', 'millet', 'buckwheat', 'rye', 'cornmeal', 'polenta', 'grits', 'bran', 'granola', 'oatmeal'];
   if (grains.some(g => name.includes(g))) {
     return { category: 'grains', confidence: 0.9, reasoning: 'Matched grain/cereal keywords' };
   }
   
   // Beverages
-  const beverages = ['water', 'juice', 'soda', 'coffee', 'tea', 'beer', 'wine', 'energy drink', 'sports drink', 'smoothie', 'cola', 'lemonade', 'milk', 'almond milk', 'soy milk', 'coconut milk', 'kombucha', 'sparkling water', 'tonic', 'ginger ale', 'root beer'];
+  const beverages = ['water', 'juice', 'soda', 'coffee', 'tea', 'beer', 'wine', 'energy drink', 'sports drink', 'smoothie', 'cola', 'lemonade', 'almond milk', 'soy milk', 'coconut milk', 'kombucha', 'sparkling water', 'tonic', 'ginger ale', 'root beer'];
   if (beverages.some(b => name.includes(b))) {
     return { category: 'beverages', confidence: 0.9, reasoning: 'Matched beverage keywords' };
   }

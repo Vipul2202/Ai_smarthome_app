@@ -23,19 +23,30 @@ export async function createContext(request: FastifyRequest, reply: FastifyReply
       const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your-super-secret-jwt-key-change-this') as any;
       
       if (decoded && decoded.userId) {
-        const dbUser = await prisma.user.findUnique({
-          where: { id: decoded.userId },
-          select: { id: true, email: true }
-        });
-        
-        if (dbUser) {
-          user = dbUser;
+        // Use cached user info from JWT payload if available (optimized)
+        if (decoded.email && decoded.id) {
+          user = {
+            id: decoded.userId,
+            email: decoded.email
+          };
+        } else {
+          // Fallback to database lookup only if needed (minimal select)
+          const dbUser = await prisma.user.findUnique({
+            where: { id: decoded.userId },
+            select: { id: true, email: true } // Only select needed fields
+          });
+          
+          if (dbUser) {
+            user = dbUser;
+          }
         }
       }
     }
   } catch (error) {
-    // Invalid token, continue without user
-    console.log('Invalid token:', error);
+    // Invalid token, continue without user (don't log in production)
+    if (process.env.NODE_ENV === 'development') {
+      console.log('Invalid token:', error);
+    }
   }
 
   return {
@@ -53,45 +64,19 @@ export function requireAuth(context: Context) {
   return context.user;
 }
 
-export async function requireHouseholdAccess(
-  context: Context, 
-  householdId: string, 
-  minRole: 'VIEWER' | 'MEMBER' | 'ADMIN' | 'OWNER' = 'VIEWER'
-) {
+export async function requireHouseAccess(context: Context, houseId: string) {
   const user = requireAuth(context);
   
-  const membership = await context.prisma.householdMember.findFirst({
+  const house = await context.prisma.house.findFirst({
     where: {
+      id: houseId,
       userId: user.id,
-      householdId,
     },
   });
 
-  if (!membership) {
-    throw ResourceErrors.permissionDenied('household access');
+  if (!house) {
+    throw ResourceErrors.permissionDenied('house access');
   }
 
-  const roleHierarchy: Record<string, number> = { VIEWER: 0, MEMBER: 1, ADMIN: 2, OWNER: 3 };
-  if (roleHierarchy[membership.role] < roleHierarchy[minRole]) {
-    throw ResourceErrors.permissionDenied(`${minRole} role access`);
-  }
-
-  return membership;
-}
-
-export async function requireKitchenAccess(
-  context: Context, 
-  kitchenId: string, 
-  minRole: 'VIEWER' | 'MEMBER' | 'ADMIN' | 'OWNER' = 'VIEWER'
-) {
-  const kitchen = await context.prisma.kitchen.findUnique({
-    where: { id: kitchenId },
-    select: { householdId: true },
-  });
-
-  if (!kitchen) {
-    throw ResourceErrors.resourceNotFound('Kitchen');
-  }
-
-  return requireHouseholdAccess(context, kitchen.householdId, minRole);
+  return house;
 }

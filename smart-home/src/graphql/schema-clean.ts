@@ -73,7 +73,6 @@ export const typeDefs: DocumentNode = gql`
     imageUrl: String
     barcode: String
     description: String
-    expiryDate: DateTime
     createdAt: DateTime!
     updatedAt: DateTime!
   }
@@ -160,12 +159,6 @@ export const typeDefs: DocumentNode = gql`
     CUSTOM
   }
 
-  type TimerPreset {
-    name: String!
-    duration: Int!
-    category: TimerCategory!
-  }
-
   # Input Types
   input RegisterInput {
     email: String!
@@ -217,21 +210,6 @@ export const typeDefs: DocumentNode = gql`
     imageUrl: String
     barcode: String
     description: String
-  }
-
-  input CreateInventoryItemsInput {
-    houseId: ID!
-    items: [CreateInventoryItemInput!]!
-  }
-
-  input BulkCreateInventoryItemsInput {
-    houseId: ID!
-    items: [CreateInventoryItemInput!]!
-  }
-
-  type BulkInventoryResult {
-    count: Int!
-    items: [InventoryItem!]!
   }
 
   input UpdateInventoryItemInput {
@@ -287,7 +265,6 @@ export const typeDefs: DocumentNode = gql`
     timers(isActive: Boolean): [KitchenTimer!]!
     activeTimers: [KitchenTimer!]!
     timer(id: ID!): KitchenTimer
-    timerPresets: [TimerPreset!]!
 
     # Voice Control
     searchInventoryByVoice(houseId: ID!, searchTerm: String!): [InventorySearchResult!]!
@@ -300,8 +277,6 @@ export const typeDefs: DocumentNode = gql`
     login(input: LoginInput!): AuthPayload!
     googleLogin(idToken: String!): AuthPayload!
     logout: Boolean!
-    forgotPassword(email: String!): Boolean!
-    resetPassword(token: String!, newPassword: String!): Boolean!
     
     # User Profile
     updateUserProfile(input: UpdateUserProfileInput!): User!
@@ -314,7 +289,6 @@ export const typeDefs: DocumentNode = gql`
 
     # Inventory
     createInventoryItem(input: CreateInventoryItemInput!): InventoryItem!
-    createInventoryItems(input: CreateInventoryItemsInput!): BulkInventoryResult!
     updateInventoryItem(id: ID!, input: UpdateInventoryItemInput!): InventoryItem!
     deleteInventoryItem(id: ID!): Boolean!
 
@@ -336,7 +310,5 @@ export const typeDefs: DocumentNode = gql`
     pauseTimer(id: ID!): KitchenTimer!
     stopTimer(id: ID!): KitchenTimer!
     resetTimer(id: ID!): KitchenTimer!
-    createTimerFromPreset(presetName: String!, customName: String): KitchenTimer!
-    bulkStopTimers(timerIds: [ID!]!): Int!
   }
 `;

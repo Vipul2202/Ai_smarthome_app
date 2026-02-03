@@ -9,377 +9,77 @@ datasource db {
 }
 
 model User {
-  id                String            @id @default(cuid())
-  email             String            @unique
-  name              String?
-  password          String
-  avatar            String?
-  phone             String?
-  location          String?
-  emailVerified     Boolean           @default(false)
-  createdAt         DateTime          @default(now())
-  updatedAt         DateTime          @updatedAt
-  houses            House[]           @relation("UserHouses")
-  createdHouseholds Household[]       @relation("HouseholdCreator")
-  households        HouseholdMember[]
-  timers            KitchenTimer[]
-  mealPlans         MealPlan[]
-  nutritionEntries  NutritionEntry[]
-  nutritionGoals    NutritionGoals?
-  preferences       UserPreferences?
-  settings          UserSettings?
-  wasteEntries      WasteEntry[]
-}
-
-model House {
-  id          String   @id @default(cuid())
-  userId      String
-  name        String
-  description String?
-  createdDate DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-  user        User     @relation("UserHouses", fields: [userId], references: [id], onDelete: Cascade)
-
-  @@index([userId])
-}
-
-model UserSettings {
-  id             String               @id @default(cuid())
-  userId         String               @unique
-  notificationId String               @unique
-  privacyId      String               @unique
-  createdAt      DateTime             @default(now())
-  updatedAt      DateTime             @updatedAt
-  notifications  NotificationSettings @relation(fields: [notificationId], references: [id])
-  privacy        PrivacySettings      @relation(fields: [privacyId], references: [id])
-  user           User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
-}
-
-model NotificationSettings {
-  id        String        @id @default(cuid())
-  lowStock  Boolean       @default(true)
-  expiry    Boolean       @default(true)
-  shopping  Boolean       @default(false)
-  mealPlan  Boolean       @default(true)
-  push      Boolean       @default(true)
-  email     Boolean       @default(false)
-  sms       Boolean       @default(false)
-  createdAt DateTime      @default(now())
-  updatedAt DateTime      @updatedAt
-  settings  UserSettings?
-}
-
-model PrivacySettings {
-  id                String            @id @default(cuid())
-  profileVisibility ProfileVisibility @default(HOUSEHOLD_ONLY)
-  dataSharing       Boolean           @default(false)
-  analyticsOptOut   Boolean           @default(false)
-  createdAt         DateTime          @default(now())
-  updatedAt         DateTime          @updatedAt
-  settings          UserSettings?
+  id            String            @id @default(cuid())
+  email         String            @unique
+  name          String?
+  password      String?
+  avatar        String?
+  phone         String?
+  location      String?
+  emailVerified Boolean           @default(false)
+  googleId      String?           @unique
+  provider      AuthProvider      @default(EMAIL)
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+  houses        House[]           @relation("UserHouses")
+  timers        KitchenTimer[]
+  preferences   UserPreferences?
 }
 
 model UserPreferences {
-  id         String   @id @default(cuid())
-  userId     String   @unique
-  theme      Theme    @default(SYSTEM)
-  language   String   @default("en-US")
-  currency   String   @default("INR")
-  timezone   String   @default("Asia/Kolkata")
-  dateFormat String   @default("DD/MM/YYYY")
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
-  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id                    String   @id @default(cuid())
+  userId                String   @unique
+  theme                 Theme    @default(SYSTEM)
+  language              String   @default("en-US")
+  currency              String   @default("INR")
+  timezone              String   @default("Asia/Kolkata")
+  dateFormat            String   @default("DD/MM/YYYY")
+  lowStockNotifications Boolean  @default(true)
+  expiryNotifications   Boolean  @default(true)
+  pushNotifications     Boolean  @default(true)
+  emailNotifications    Boolean  @default(false)
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+  user                  User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
-model Household {
-  id          String            @id @default(cuid())
-  name        String
-  description String?
-  inviteCode  String?           @unique
-  createdById String
-  createdAt   DateTime          @default(now())
-  updatedAt   DateTime          @updatedAt
-  createdBy   User              @relation("HouseholdCreator", fields: [createdById], references: [id])
-  members     HouseholdMember[]
-  kitchens    Kitchen[]
-}
-
-model HouseholdMember {
-  id          String        @id @default(cuid())
-  userId      String
-  householdId String
-  role        HouseholdRole @default(MEMBER)
-  joinedAt    DateTime      @default(now())
-  household   Household     @relation(fields: [householdId], references: [id], onDelete: Cascade)
-  user        User          @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@unique([userId, householdId])
-}
-
-model Kitchen {
+model House {
   id          String          @id @default(cuid())
-  householdId String
+  userId      String
   name        String
   description String?
-  type        KitchenType     @default(HOME)
-  createdAt   DateTime        @default(now())
+  createdDate DateTime        @default(now())
   updatedAt   DateTime        @updatedAt
-  expenses    Expense[]
+  user        User            @relation("UserHouses", fields: [userId], references: [id], onDelete: Cascade)
   inventory   InventoryItem[]
-  household   Household       @relation(fields: [householdId], references: [id], onDelete: Cascade)
-  reminders   Reminder[]
-  shopping    ShoppingList[]
-  logs        UsageLog[]
 }
 
 model InventoryItem {
-  id          String           @id @default(cuid())
-  kitchenId   String
+  id          String   @id @default(cuid())
+  houseId     String
   name        String
-  category    String
-  imageUrl    String?
-  defaultUnit String
-  threshold   Float?
-  brand       String?
-  tags        String[]
-  location    StorageLocation  @default(PANTRY)
-  createdAt   DateTime         @default(now())
-  updatedAt   DateTime         @updatedAt
-  batches     InventoryBatch[]
-  kitchen     Kitchen          @relation(fields: [kitchenId], references: [id], onDelete: Cascade)
-  usageLogs   UsageLog[]
-
-  @@index([kitchenId])
-  @@index([name])
-  @@index([category])
-  @@index([kitchenId, name])
-  @@index([kitchenId, category])
-}
-
-model InventoryBatch {
-  id            String        @id @default(cuid())
-  itemId        String
-  quantity      Float
-  unit          String
-  expiryDate    DateTime?
-  purchaseDate  DateTime?
-  purchasePrice Float?
-  vendor        String?
-  status        BatchStatus   @default(ACTIVE)
-  createdAt     DateTime      @default(now())
-  updatedAt     DateTime      @updatedAt
-  item          InventoryItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
-}
-
-model ShoppingList {
-  id          String             @id @default(cuid())
-  kitchenId   String
-  type        ShoppingListType
-  title       String
-  description String?
-  forDate     DateTime?
-  isCompleted Boolean            @default(false)
-  createdAt   DateTime           @default(now())
-  updatedAt   DateTime           @updatedAt
-  kitchen     Kitchen            @relation(fields: [kitchenId], references: [id], onDelete: Cascade)
-  items       ShoppingListItem[]
-}
-
-model ShoppingListItem {
-  id           String       @id @default(cuid())
-  listId       String
-  name         String
-  quantity     Float?
-  unit         String?
-  linkedItemId String?
-  isPurchased  Boolean      @default(false)
-  price        Float?
-  notes        String?
-  createdAt    DateTime     @default(now())
-  updatedAt    DateTime     @updatedAt
-  list         ShoppingList @relation(fields: [listId], references: [id], onDelete: Cascade)
-}
-
-model Expense {
-  id           String      @id @default(cuid())
-  kitchenId    String
-  type         ExpenseType
-  amount       Float
-  vendor       String?
-  date         DateTime
-  billImageUrl String?
-  items        Json?
-  notes        String?
-  category     String?
-  createdAt    DateTime    @default(now())
-  updatedAt    DateTime    @updatedAt
-  kitchen      Kitchen     @relation(fields: [kitchenId], references: [id], onDelete: Cascade)
-}
-
-model Reminder {
-  id          String       @id @default(cuid())
-  kitchenId   String
-  type        ReminderType
-  title       String
-  description String?
-  scheduledAt DateTime
-  isRecurring Boolean      @default(false)
-  frequency   String?
-  isCompleted Boolean      @default(false)
-  meta        Json?
-  createdAt   DateTime     @default(now())
-  updatedAt   DateTime     @updatedAt
-  kitchen     Kitchen      @relation(fields: [kitchenId], references: [id], onDelete: Cascade)
-}
-
-model UsageLog {
-  id        String        @id @default(cuid())
-  kitchenId String
-  itemId    String
-  type      UsageLogType
-  quantity  Float
-  unit      String
-  notes     String?
-  date      DateTime      @default(now())
-  createdAt DateTime      @default(now())
-  item      InventoryItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
-  kitchen   Kitchen       @relation(fields: [kitchenId], references: [id], onDelete: Cascade)
-}
-
-model AIScan {
-  id         String   @id @default(cuid())
-  imageUrl   String
-  scanType   String
-  result     Json
-  confidence Float?
-  processed  Boolean  @default(false)
-  createdAt  DateTime @default(now())
-}
-
-model RecipeHistory {
-  id          String   @id @default(cuid())
-  kitchenId   String?
-  title       String
-  ingredients Json
-  steps       Json
-  cuisine     String?
-  prepTime    Int?
-  calories    Int?
-  source      String   @default("AI")
-  isFavorite  Boolean  @default(false)
-  createdAt   DateTime @default(now())
-}
-
-model MealPlan {
-  id          String   @id @default(cuid())
-  userId      String
-  kitchenId   String?
-  date        DateTime
-  mealType    MealType
-  recipeId    String?
-  recipeName  String?
-  servings    Int?
-  calories    Int?
-  prepTime    Int?
-  notes       String?
-  isCompleted Boolean  @default(false)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@unique([userId, date, mealType])
-}
-
-model MealPlanTemplate {
-  id          String   @id @default(cuid())
-  name        String
-  description String?
-  category    String
-  meals       Json
-  duration    Int?
-  isPublic    Boolean  @default(false)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-}
-
-model NutritionEntry {
-  id        String   @id @default(cuid())
-  userId    String
-  date      DateTime
-  mealType  MealType
-  foodName  String
-  quantity  Float
-  unit      String
-  calories  Float?
-  protein   Float?
-  carbs     Float?
-  fat       Float?
-  fiber     Float?
-  sugar     Float?
-  sodium    Float?
-  notes     String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-}
-
-model NutritionGoals {
-  id            String   @id @default(cuid())
-  userId        String   @unique
-  dailyCalories Float?
-  dailyProtein  Float?
-  dailyCarbs    Float?
-  dailyFat      Float?
-  dailyFiber    Float?
-  dailyWater    Float?
-  weightGoal    Float?
-  activityLevel String?
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
-  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-}
-
-model WaterIntake {
-  id        String   @id @default(cuid())
-  userId    String
-  date      DateTime
-  amount    Float
-  time      DateTime
-  createdAt DateTime @default(now())
-
-  @@index([userId, date])
-}
-
-model WasteEntry {
-  id          String      @id @default(cuid())
-  userId      String
-  kitchenId   String?
-  date        DateTime
-  itemName    String
   category    String?
+  location    String?
   quantity    Float
   unit        String
-  reason      WasteReason
-  cost        Float?
-  preventable Boolean     @default(true)
-  notes       String?
-  createdAt   DateTime    @default(now())
-  updatedAt   DateTime    @updatedAt
-  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
-}
+  imageUrl    String?
+  barcode     String?
+  description String?
+  expiryDate  DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  house       House    @relation(fields: [houseId], references: [id], onDelete: Cascade)
 
-model WasteGoals {
-  id              String   @id @default(cuid())
-  userId          String   @unique
-  monthlyWasteKg  Float?
-  monthlyCostSave Float?
-  co2SaveKg       Float?
-  waterSaveLiters Float?
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
-
-  @@index([userId])
+  @@index([houseId])
+  @@index([name])
+  @@index([category])
+  @@index([location])
+  @@index([houseId, name])
+  @@index([houseId, category])
+  @@index([houseId, location])
+  @@index([houseId, name, category])
+  @@index([updatedAt])
+  @@index([createdAt])
 }
 
 model KitchenTimer {
@@ -398,117 +98,25 @@ model KitchenTimer {
   user        User          @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
-model Notification {
-  id        String           @id @default(cuid())
-  userId    String
-  type      NotificationType
-  title     String
-  message   String
-  data      Json?
-  isRead    Boolean          @default(false)
-  sentAt    DateTime?
-  readAt    DateTime?
-  createdAt DateTime         @default(now())
-
-  @@index([userId, isRead])
-  @@index([userId, createdAt])
+model AIScan {
+  id         String   @id @default(cuid())
+  imageUrl   String
+  scanType   String
+  result     Json
+  confidence Float?
+  processed  Boolean  @default(false)
+  createdAt  DateTime @default(now())
 }
 
-enum ProfileVisibility {
-  PUBLIC
-  HOUSEHOLD_ONLY
-  PRIVATE
+enum AuthProvider {
+  EMAIL
+  GOOGLE
 }
 
 enum Theme {
   LIGHT
   DARK
   SYSTEM
-}
-
-enum HouseholdRole {
-  OWNER
-  ADMIN
-  MEMBER
-  VIEWER
-}
-
-enum KitchenType {
-  HOME
-  OFFICE
-  PG
-  HOSTEL
-}
-
-enum StorageLocation {
-  PANTRY
-  FRIDGE
-  FREEZER
-  CONTAINER
-  CABINET
-}
-
-enum BatchStatus {
-  ACTIVE
-  USED
-  EXPIRED
-  WASTED
-}
-
-enum ShoppingListType {
-  DAILY
-  WEEKLY
-  MONTHLY
-  FESTIVAL
-  EVENT
-  CUSTOM
-}
-
-enum ExpenseType {
-  RATION
-  FOOD_ORDER
-  GROCERY
-  VEGETABLES
-  FRUITS
-  DAIRY
-  MEAT
-  OTHER
-}
-
-enum ReminderType {
-  LOW_STOCK
-  EXPIRY
-  SHOPPING
-  FESTIVAL
-  APPLIANCE
-  GAS_CYLINDER
-  WATER_CAN
-  CUSTOM
-}
-
-enum UsageLogType {
-  COOKED
-  CONSUMED
-  WASTED
-  PURCHASED
-  ADJUSTED
-}
-
-enum MealType {
-  BREAKFAST
-  LUNCH
-  DINNER
-  SNACK
-}
-
-enum WasteReason {
-  EXPIRED
-  SPOILED
-  OVERCOOKED
-  LEFTOVER
-  ACCIDENTAL
-  DISLIKED
-  OTHER
 }
 
 enum TimerCategory {
@@ -519,16 +127,4 @@ enum TimerCategory {
   MARINATING
   RESTING
   CUSTOM
-}
-
-enum NotificationType {
-  EXPIRY_WARNING
-  LOW_STOCK
-  SHOPPING_REMINDER
-  MEAL_PLAN_REMINDER
-  TIMER_COMPLETE
-  WASTE_GOAL_EXCEEDED
-  NUTRITION_GOAL_ACHIEVED
-  SYSTEM_UPDATE
-  GENERAL
 }

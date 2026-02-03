@@ -18,6 +18,7 @@ import { resolvers } from './graphql/resolvers';
 import { createContext, Context } from './graphql/context';
 import { prisma } from './lib/prisma';
 import { OCRService } from './services/ocr';
+import { WhisperService } from './services/whisper';
 
 const PORT = Number(process.env.PORT) || 4000;
 const HOST = process.env.HOST || '0.0.0.0';
@@ -328,10 +329,7 @@ async function startServer() {
 
       fastify.log.info('Processing audio transcription...');
 
-      // Import WhisperService dynamically
-      const { WhisperService } = await import('./services/whisper.js');
-
-      // Transcribe audio
+      // Transcribe audio using WhisperService
       const transcript = await WhisperService.transcribeAudioBuffer(
         buffer,
         data.filename

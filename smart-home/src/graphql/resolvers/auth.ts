@@ -1,5 +1,6 @@
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
+import { OAuth2Client } from 'google-auth-library';
 import { Context, requireAuth } from '../context';
 import { 
   AuthErrors, 
@@ -14,6 +15,12 @@ import { EmailService } from '../../services/email';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'your-super-secret-jwt-key-change-this';
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '7d';
+
+// Google OAuth client
+const googleClient = new OAuth2Client(
+  process.env.GOOGLE_CLIENT_ID_IOS,
+  process.env.GOOGLE_CLIENT_SECRET
+);
 
 export const authResolvers: any = {
   Query: {
@@ -58,34 +65,32 @@ export const authResolvers: any = {
             email: email.toLowerCase(),
             password: hashedPassword,
             name: name?.trim(),
+            provider: 'EMAIL',
           },
         });
 
-        // Create default household
-        const household = await context.prisma.household.create({
-          data: {
-            name: `${name?.trim() || email.split('@')[0]}'s Kitchen`,
-            description: 'My personal kitchen management',
-            createdById: user.id,
-          },
-        });
-
-        // Add user as owner of the household
-        await context.prisma.householdMember.create({
+        // Create default house
+        await context.prisma.house.create({
           data: {
             userId: user.id,
-            householdId: household.id,
-            role: 'OWNER',
+            name: `${name?.trim() || email.split('@')[0]}'s Home`,
+            description: 'My smart home',
           },
         });
 
-        // Create default kitchen
-        await context.prisma.kitchen.create({
+        // Create default user preferences
+        await context.prisma.userPreferences.create({
           data: {
-            householdId: household.id,
-            name: 'Home Kitchen',
-            description: 'Main kitchen',
-            type: 'HOME',
+            userId: user.id,
+            theme: 'SYSTEM',
+            language: 'en-US',
+            currency: 'INR',
+            timezone: 'Asia/Kolkata',
+            dateFormat: 'DD/MM/YYYY',
+            lowStockNotifications: true,
+            expiryNotifications: true,
+            pushNotifications: true,
+            emailNotifications: false,
           },
         });
 
@@ -129,26 +134,34 @@ export const authResolvers: any = {
 
     login: async (_: any, { input }: any, context: Context) => {
       try {
-        // Check security first
-        await checkGraphQLSecurity(context);
-        
         const { email, password } = input;
         const ip = securityMiddleware.getClientIP(context.request);
 
+        // Check security and rate limiting FIRST before any database operations
+        await checkGraphQLSecurity(context);
+        
         // Check if IP is locked out
         if (securityMiddleware.isLockedOut(ip)) {
           throw new Error('Too many failed login attempts. Please try again later.');
         }
 
-        // Validate email format
+        // Validate email format before database query
         if (!isValidEmail(email)) {
           securityMiddleware.trackFailedLogin(ip);
           throw ValidationErrors.invalidEmail();
         }
 
-        // Find user
+        // Single optimized database query with password included
         const user = await context.prisma.user.findUnique({
           where: { email: email.toLowerCase() },
+          select: {
+            id: true,
+            email: true,
+            password: true,
+            name: true,
+            createdAt: true,
+            updatedAt: true,
+          },
         });
 
         if (!user) {
@@ -166,9 +179,96 @@ export const authResolvers: any = {
         // Clear failed login attempts on successful login
         securityMiddleware.clearFailedLogins(ip);
 
-        // Generate JWT token
+        // Generate JWT token with user info to avoid future database lookups
         const token = jwt.sign(
-          { userId: user.id, email: user.email },
+          { 
+            userId: user.id, 
+            email: user.email,
+            id: user.id // Include both for compatibility
+          },
+          JWT_SECRET,
+          { expiresIn: JWT_EXPIRES_IN } as jwt.SignOptions
+        );
+
+        // Return user without password
+        const { password: _, ...userWithoutPassword } = user;
+        
+        return {
+          token,
+          user: userWithoutPassword,
+        };
+      } catch (error: any) {
+        // Handle Prisma errors
+        if (error.code && error.code.startsWith('P')) {
+          throw handlePrismaError(error);
+        }
+        
+        // Re-throw custom errors
+        if (error.extensions?.code) {
+          throw error;
+        }
+
+        // Handle unexpected errors
+        console.error('Login error:', error);
+        throw ServerErrors.internalError('Failed to authenticate user');
+      }
+    },
+
+    googleLogin: async (_: any, { idToken }: any, context: Context) => {
+      try {
+        // Verify the Google ID token
+        const ticket = await googleClient.verifyIdToken({
+          idToken,
+          audience: [
+            process.env.GOOGLE_CLIENT_ID_IOS!,
+            process.env.GOOGLE_CLIENT_ID_ANDROID!
+          ],
+        });
+
+        const payload = ticket.getPayload();
+        if (!payload) {
+          throw AuthErrors.invalidToken();
+        }
+
+        const { sub: googleId, email, name, picture } = payload;
+
+        if (!email) {
+          throw new Error('Email not provided by Google');
+        }
+
+        // Use upsert for optimal performance - single database operation
+        const user = await context.prisma.user.upsert({
+          where: { googleId },
+          update: {
+            // Update existing user's info
+            name: name || undefined,
+            avatar: picture || undefined,
+          },
+          create: {
+            // Create new user
+            googleId,
+            email: email.toLowerCase(),
+            name: name || email.split('@')[0],
+            avatar: picture,
+            password: '', // Empty password for Google users
+          },
+          select: {
+            id: true,
+            email: true,
+            name: true,
+            avatar: true,
+            createdAt: true,
+            updatedAt: true,
+          },
+        });
+
+        // Generate JWT token with user info
+        const token = jwt.sign(
+          { 
+            userId: user.id, 
+            email: user.email,
+            id: user.id // Include both for compatibility
+          },
           JWT_SECRET,
           { expiresIn: JWT_EXPIRES_IN } as jwt.SignOptions
         );
@@ -188,9 +288,8 @@ export const authResolvers: any = {
           throw error;
         }
 
-        // Handle unexpected errors
-        console.error('Login error:', error);
-        throw ServerErrors.internalError('Failed to authenticate user');
+        console.error('Google login error:', error);
+        throw ServerErrors.internalError('Failed to authenticate with Google');
       }
     },
 

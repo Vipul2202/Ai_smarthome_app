@@ -28,43 +28,54 @@ Determine:
 2. Item name (required)
 3. Quantity (if mentioned)
 4. Unit (pieces, kg, bottles, etc.)
-5. Category (accept whatever user says - no suggestions)
-6. Location (accept whatever user says - no suggestions)
+5. Category (auto-detect from item name if possible: fruits, vegetables, dairy, meat, grains, beverages, snacks, other)
+6. Location (auto-detect common locations: fridge, freezer, pantry, cabinet, container)
 7. Missing information that should be asked
 
+Auto-detection rules:
+- Milk, cheese, yogurt, butter → dairy
+- Apple, banana, orange, fruit → fruits  
+- Tomato, onion, potato, vegetable → vegetables
+- Chicken, beef, meat, fish → meat
+- Bread, rice, pasta, cereal → grains
+- Water, juice, soda, coffee → beverages
+- Chips, cookies, candy, snack → snacks
+- Common locations: fridge, freezer, pantry, cabinet, cupboard
+
 Examples:
-- "Add 2 bottles of milk" → ADD, milk, 2, bottles, null, null (missing category, location)
-- "Add milk to my fridge in dairy section" → ADD, milk, null, null, dairy section, my fridge
-- "Add tomatoes" → ADD, tomatoes, null, null, null, null (missing quantity, unit, category, location)
+- "Add 2 bottles of milk" → ADD, milk, 2, bottles, dairy, null (auto-detected category, missing location)
+- "Add milk to my fridge" → ADD, milk, null, null, dairy, fridge (auto-detected both)
+- "Add tomatoes" → ADD, tomatoes, null, null, vegetables, null (auto-detected category, missing quantity, location)
+- "Update chicken to 3 pieces" → UPDATE, chicken, 3, pieces, meat, null (auto-detected category)
+- "Search for apples" → SEARCH, apples, null, null, fruits, null
+- "Delete old bread" → DELETE, bread, null, null, grains, null
 
 IMPORTANT: 
-- Accept ANY category name user provides (don't limit to predefined categories)
-- Accept ANY location name user provides (don't limit to predefined locations)
-- If user doesn't specify category or location, mark as missing info
-- Don't suggest options, just ask for missing information
-- When asking for missing info, ask simple questions without giving examples
+- Try to auto-detect category and location from context
+- Only mark as missing if truly cannot be determined
+- Accept ANY user-provided category/location names
+- For missing info, ask simple questions without examples
 
 Respond in JSON format:
 {
   "intent": "ADD|UPDATE|SEARCH|DELETE",
   "item": {
-    "name": "item name",
+    "name": "extracted item name",
     "quantity": number or null,
-    "unit": "unit or null",
-    "category": "category or null",
-    "location": "location or null"
+    "unit": "extracted unit or null",
+    "category": "auto-detected or user-provided category or null",
+    "location": "auto-detected or user-provided location or null"
   },
   "confidence": 0.0-1.0,
-  "missingInfo": ["quantity", "unit", "location"] // what info is missing
-}
-`;
+  "missingInfo": ["quantity", "unit", "category", "location"] // only truly missing items
+}`;
 
     const response = await openai.chat.completions.create({
-      model: 'gpt-3.5-turbo',
+      model: 'gpt-4o-mini', // Updated to current model
       messages: [
         {
           role: 'system',
-          content: 'You are a smart home inventory assistant. Extract intent and item details from voice commands. Always respond with valid JSON.'
+          content: 'You are a voice command analyzer for a smart home inventory system. Extract intent and item details accurately. Always respond with valid JSON.'
         },
         {
           role: 'user',
@@ -72,18 +83,12 @@ Respond in JSON format:
         }
       ],
       temperature: 0.1,
-      max_tokens: 300,
+      max_tokens: 500,
     });
 
-    const content = response.choices[0]?.message?.content;
-    if (!content) {
-      throw new Error('No response from OpenAI');
-    }
-
-    // Parse the JSON response
-    const result = JSON.parse(content);
+    const result = JSON.parse(response.choices[0].message.content || '{}');
     
-    // Validate and normalize the response
+    // Validate and clean the result
     return {
       intent: result.intent || 'UNKNOWN',
       item: {
@@ -93,82 +98,54 @@ Respond in JSON format:
         category: result.item?.category || null,
         location: result.item?.location || null,
       },
-      confidence: Math.min(Math.max(result.confidence || 0, 0), 1),
+      confidence: result.confidence || 0.5,
       missingInfo: result.missingInfo || [],
     };
 
   } catch (error) {
-    console.error('Error processing voice intent:', error);
-    
-    // Fallback: simple keyword matching
-    const lowerTranscript = transcript.toLowerCase();
-    let intent: VoiceIntent['intent'] = 'UNKNOWN';
-    
-    if (lowerTranscript.includes('add') || lowerTranscript.includes('put')) {
-      intent = 'ADD';
-    } else if (lowerTranscript.includes('update') || lowerTranscript.includes('change')) {
-      intent = 'UPDATE';
-    } else if (lowerTranscript.includes('search') || lowerTranscript.includes('find')) {
-      intent = 'SEARCH';
-    } else if (lowerTranscript.includes('delete') || lowerTranscript.includes('remove')) {
-      intent = 'DELETE';
-    }
-
+    console.error('Voice intent processing failed:', error);
     return {
-      intent,
+      intent: 'UNKNOWN',
       item: {
-        name: transcript,
+        name: '',
         quantity: null,
         unit: null,
         category: null,
         location: null,
       },
-      confidence: 0.3,
-      missingInfo: ['quantity', 'unit', 'category', 'location'],
+      confidence: 0.0,
+      missingInfo: [],
     };
   }
 }
 
-export async function askForMissingInfo(missingInfo: string[]): Promise<string> {
+export async function generateMissingInfoSpeech(missingInfo: string[]): Promise<string> {
   try {
-    let question = '';
+    console.log('🎤 Generating missing info speech for:', missingInfo);
     
-    // First, mention that some info is missing
-    const missingText = missingInfo.length === 1 ? 
-      `Some information is missing. ` : 
-      `Some information is missing. `;
-    
-    if (missingInfo.length === 1) {
-      const info = missingInfo[0];
-      switch(info) {
+    const questions = missingInfo.map((info: string) => {
+      switch (info) {
         case 'quantity':
-          question = missingText + "How many?";
-          break;
+          return 'How much do you want to add?';
         case 'unit':
-          question = missingText + "What unit?";
-          break;
+          return 'What unit should I use?';
         case 'category':
-          question = missingText + "What category?";
-          break;
+          return 'What category is this item?';
         case 'location':
-          question = missingText + "Where to store?";
-          break;
+          return 'Where do you want to store this?';
         default:
-          question = missingText + `What ${info}?`;
+          return `Please provide ${info}`;
       }
-    } else if (missingInfo.length === 2) {
-      question = missingText + `Please tell me the ${missingInfo.join(' and ')}.`;
-    } else if (missingInfo.length === 3) {
-      question = missingText + `Please provide the ${missingInfo.slice(0, -1).join(', ')} and ${missingInfo[missingInfo.length - 1]}.`;
-    } else {
-      question = missingText + "Please provide the missing information.";
-    }
+    });
+
+    const speechText = questions.join(' ');
     
     const response = await openai.audio.speech.create({
       model: 'tts-1',
       voice: 'nova',
-      input: question,
+      input: speechText,
       speed: 0.7, // Slower and clearer speech
+      response_format: 'mp3', // Explicitly set format
     });
 
     // Convert to base64 for frontend
@@ -176,7 +153,7 @@ export async function askForMissingInfo(missingInfo: string[]): Promise<string> 
     return buffer.toString('base64');
 
   } catch (error) {
-    console.error('Error generating speech:', error);
+    console.error('Error generating missing info speech:', error);
     return '';
   }
 }
@@ -190,6 +167,7 @@ export async function generateSimpleSpeech(text: string): Promise<string> {
       voice: 'nova',
       input: text,
       speed: 0.7, // Slower and clearer speech
+      response_format: 'mp3', // Explicitly set format
     });
 
     // Convert to base64 for frontend
