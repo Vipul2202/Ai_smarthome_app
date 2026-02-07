@@ -31,6 +31,43 @@ export const typeDefs: DocumentNode = gql`
     updatedAt: DateTime!
     user: User!
     inventory: [InventoryItem!]!
+    shares: [HouseShare!]!
+    invitations: [HouseInvitation!]!
+    userRole: HouseRole
+  }
+
+  type HouseShare {
+    id: ID!
+    houseId: ID!
+    userId: ID!
+    role: HouseRole!
+    createdAt: DateTime!
+    updatedAt: DateTime!
+    user: User!
+  }
+
+  type HouseInvitation {
+    id: ID!
+    houseId: ID!
+    inviteCode: String!
+    invitedUserId: ID
+    role: HouseRole!
+    expiryDate: DateTime!
+    status: InvitationStatus!
+    createdDate: DateTime!
+    usedDate: DateTime
+    house: House!
+  }
+
+  enum HouseRole {
+    READ
+    WRITE
+  }
+
+  enum InvitationStatus {
+    PENDING
+    ACCEPTED
+    EXPIRED
   }
 
   type UserPreferences {
@@ -207,6 +244,21 @@ export const typeDefs: DocumentNode = gql`
     description: String
   }
 
+  input CreateHouseInvitationInput {
+    houseId: ID!
+    role: HouseRole!
+    expiryDays: Int
+  }
+
+  input AcceptHouseInvitationInput {
+    inviteCode: String!
+  }
+
+  type HouseInvitationResult {
+    invitation: HouseInvitation!
+    inviteLink: String!
+  }
+
   input CreateInventoryItemInput {
     houseId: ID!
     name: String!
@@ -275,6 +327,9 @@ export const typeDefs: DocumentNode = gql`
     # Houses
     houses: [House!]!
     house(id: ID!): House
+    sharedHouses: [House!]!
+    houseInvitations(houseId: ID!): [HouseInvitation!]!
+    houseShares(houseId: ID!): [HouseShare!]!
 
     # Inventory
     inventoryItems(houseId: ID!): [InventoryItem!]!
@@ -311,6 +366,13 @@ export const typeDefs: DocumentNode = gql`
     createHouse(input: CreateHouseInput!): House!
     updateHouse(id: ID!, input: UpdateHouseInput!): House!
     deleteHouse(id: ID!): Boolean!
+    
+    # House Sharing
+    createHouseInvitation(input: CreateHouseInvitationInput!): HouseInvitationResult!
+    acceptHouseInvitation(input: AcceptHouseInvitationInput!): House!
+    revokeHouseInvitation(invitationId: ID!): Boolean!
+    removeHouseShare(shareId: ID!): Boolean!
+    updateHouseShareRole(shareId: ID!, role: HouseRole!): HouseShare!
 
     # Inventory
     createInventoryItem(input: CreateInventoryItemInput!): InventoryItem!

@@ -24,6 +24,24 @@ model User {
   houses        House[]           @relation("UserHouses")
   timers        KitchenTimer[]
   preferences   UserPreferences?
+  sharedHouses  HouseShare[]
+
+  @@index([email])
+}
+
+model HouseShare {
+  id        String    @id @default(cuid())
+  houseId   String
+  userId    String
+  role      HouseRole
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  house     House     @relation(fields: [houseId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([houseId, userId])
+  @@index([houseId])
+  @@index([userId])
 }
 
 model UserPreferences {
@@ -44,14 +62,48 @@ model UserPreferences {
 }
 
 model House {
-  id          String          @id @default(cuid())
+  id          String             @id @default(cuid())
   userId      String
   name        String
   description String?
-  createdDate DateTime        @default(now())
-  updatedAt   DateTime        @updatedAt
-  user        User            @relation("UserHouses", fields: [userId], references: [id], onDelete: Cascade)
+  createdDate DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+  user        User               @relation("UserHouses", fields: [userId], references: [id], onDelete: Cascade)
   inventory   InventoryItem[]
+  invitations HouseInvitation[]
+  shares      HouseShare[]
+
+  @@index([userId])
+}
+
+model HouseInvitation {
+  id            String   @id @default(cuid())
+  houseId       String
+  inviteCode    String   @unique
+  invitedUserId String?
+  role          HouseRole
+  expiryDate    DateTime
+  status        InvitationStatus @default(PENDING)
+  createdDate   DateTime @default(now())
+  usedDate      DateTime?
+  house         House    @relation(fields: [houseId], references: [id], onDelete: Cascade)
+
+  @@unique([houseId, invitedUserId])
+  @@index([houseId])
+  @@index([invitedUserId])
+  @@index([inviteCode])
+  @@index([status])
+}
+
+enum HouseRole {
+  READ
+  WRITE
+}
+
+enum InvitationStatus {
+  PENDING
+  ACCEPTED
+  EXPIRED
 }
 
 model InventoryItem {

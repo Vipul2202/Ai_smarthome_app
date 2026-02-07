@@ -2,26 +2,61 @@ import { Context, requireAuth, requireHouseAccess } from '../context';
 import { categorizeProductWithAI } from '../../services/ai';
 import { getDefaultLocationForCategory } from '../../utils/locations';
 
+// Helper function to check house access with role
+async function checkHouseAccess(
+  context: Context,
+  houseId: string,
+  userId: string,
+  requireWrite: boolean = false
+): Promise<{ hasAccess: boolean; role: 'READ' | 'WRITE' | null }> {
+  const house = await context.prisma.house.findFirst({
+    where: {
+      id: houseId,
+      OR: [
+        { userId },
+        { shares: { some: { userId } } },
+      ],
+    },
+    include: {
+      shares: {
+        where: { userId },
+      },
+    },
+  });
+
+  if (!house) {
+    return { hasAccess: false, role: null };
+  }
+
+  // Owner has WRITE access
+  if (house.userId === userId) {
+    return { hasAccess: true, role: 'WRITE' };
+  }
+
+  // Check shared access
+  const share = house.shares[0];
+  if (!share) {
+    return { hasAccess: false, role: null };
+  }
+
+  if (requireWrite && share.role === 'READ') {
+    return { hasAccess: false, role: share.role };
+  }
+
+  return { hasAccess: true, role: share.role };
+}
+
 export const inventoryResolvers = {
   Query: {
     inventoryItems: async (_: any, { houseId }: any, context: Context) => {
       try {
-        // Check authentication first
         const user = requireAuth(context);
         
-        // Verify house access with better error handling
-        const house = await context.prisma.house.findFirst({
-          where: {
-            id: houseId,
-            userId: user.id,
-          },
-        });
-
-        if (!house) {
+        const access = await checkHouseAccess(context, houseId, user.id, false);
+        if (!access.hasAccess) {
           throw new Error(`House not found or access denied for house ID: ${houseId}`);
         }
         
-        // Optimized query with selective fields and proper indexing
         const items = await context.prisma.inventoryItem.findMany({
           where: { houseId },
           select: {
@@ -44,7 +79,7 @@ export const inventoryResolvers = {
           ],
         });
 
-        console.log(`✅ Found ${items.length} inventory items for house ${houseId}`);
+        console.log(`✅ Found ${items.length} inventory items for house ${houseId} (role: ${access.role})`);
         return items;
       } catch (error) {
         console.error('Error in inventoryItems query:', error);
@@ -62,6 +97,7 @@ export const inventoryResolvers = {
             house: {
               select: {
                 userId: true,
+                id: true,
               },
             },
           },
@@ -71,12 +107,11 @@ export const inventoryResolvers = {
           throw new Error('Inventory item not found');
         }
 
-        // Check if user owns the house
-        if (item.house.userId !== user.id) {
+        const access = await checkHouseAccess(context, item.house.id, user.id, false);
+        if (!access.hasAccess) {
           throw new Error('Access denied to this inventory item');
         }
 
-        // Return item without the house relation
         const { house, ...itemData } = item;
         return itemData;
       } catch (error) {
@@ -92,19 +127,14 @@ export const inventoryResolvers = {
         const { houseId, ...itemData } = input;
         const user = requireAuth(context);
         
-        // Verify house access
-        const house = await context.prisma.house.findFirst({
-          where: {
-            id: houseId,
-            userId: user.id,
-          },
-        });
-
-        if (!house) {
+        const access = await checkHouseAccess(context, houseId, user.id, true);
+        if (!access.hasAccess) {
           throw new Error(`House not found or access denied for house ID: ${houseId}`);
         }
+        if (access.role === 'READ') {
+          throw new Error('You only have read access to this house');
+        }
 
-        // Auto-categorize if no category provided
         let category = itemData.category;
         if (!category && itemData.name) {
           try {
@@ -117,12 +147,10 @@ export const inventoryResolvers = {
           }
         }
 
-        // Ensure category is properly set
         if (!category) {
           category = 'other';
         }
 
-        // Set default location if not provided
         const location = itemData.location || getDefaultLocationForCategory(category);
 
         const newItem = await context.prisma.inventoryItem.create({
@@ -156,25 +184,19 @@ export const inventoryResolvers = {
       }
     },
 
-    // New bulk create mutation for better performance
     createInventoryItems: async (_: any, { input }: any, context: Context) => {
       try {
         const { houseId, items } = input;
         const user = requireAuth(context);
         
-        // Verify house access
-        const house = await context.prisma.house.findFirst({
-          where: {
-            id: houseId,
-            userId: user.id,
-          },
-        });
-
-        if (!house) {
+        const access = await checkHouseAccess(context, houseId, user.id, true);
+        if (!access.hasAccess) {
           throw new Error(`House not found or access denied for house ID: ${houseId}`);
         }
+        if (access.role === 'READ') {
+          throw new Error('You only have read access to this house');
+        }
 
-        // Process items in parallel for categorization
         const processedItems = await Promise.all(
           items.map(async (item: any) => {
             let category = item.category;
@@ -197,13 +219,11 @@ export const inventoryResolvers = {
           })
         );
 
-        // Bulk insert for better performance
         const createdItems = await context.prisma.inventoryItem.createMany({
           data: processedItems,
           skipDuplicates: true,
         });
 
-        // Return the created items (need to fetch them since createMany doesn't return data)
         const items_created = await context.prisma.inventoryItem.findMany({
           where: {
             houseId,
@@ -242,17 +262,28 @@ export const inventoryResolvers = {
       const user = requireAuth(context);
       
       try {
-        // Optimized single query with proper access control
+        const item = await context.prisma.inventoryItem.findUnique({
+          where: { id },
+          select: { houseId: true },
+        });
+
+        if (!item) {
+          throw new Error('Inventory item not found');
+        }
+
+        const access = await checkHouseAccess(context, item.houseId, user.id, true);
+        if (!access.hasAccess) {
+          throw new Error('Inventory item not found or access denied');
+        }
+        if (access.role === 'READ') {
+          throw new Error('You only have read access to this house');
+        }
+
         const updatedItem = await context.prisma.inventoryItem.update({
-          where: { 
-            id,
-            house: {
-              userId: user.id
-            }
-          },
+          where: { id },
           data: {
             ...input,
-            updatedAt: new Date(), // Ensure updatedAt is set
+            updatedAt: new Date(),
           },
           select: {
             id: true,
@@ -277,7 +308,7 @@ export const inventoryResolvers = {
           throw new Error('An item with this name already exists in this location');
         }
         console.error('Error updating inventory item:', error);
-        throw new Error('Failed to update inventory item');
+        throw error;
       }
     },
 
@@ -285,14 +316,25 @@ export const inventoryResolvers = {
       const user = requireAuth(context);
       
       try {
-        // Optimized single query - delete with access control
+        const item = await context.prisma.inventoryItem.findUnique({
+          where: { id },
+          select: { houseId: true },
+        });
+
+        if (!item) {
+          throw new Error('Inventory item not found');
+        }
+
+        const access = await checkHouseAccess(context, item.houseId, user.id, true);
+        if (!access.hasAccess) {
+          throw new Error('Inventory item not found or access denied');
+        }
+        if (access.role === 'READ') {
+          throw new Error('You only have read access to this house');
+        }
+
         await context.prisma.inventoryItem.delete({
-          where: { 
-            id,
-            house: {
-              userId: user.id
-            }
-          },
+          where: { id },
         });
         return true;
       } catch (error: any) {
@@ -300,7 +342,7 @@ export const inventoryResolvers = {
           throw new Error('Inventory item not found or access denied');
         }
         console.error('Error deleting inventory item:', error);
-        throw new Error('Failed to delete inventory item');
+        throw error;
       }
     },
   },

@@ -5,6 +5,7 @@ import { householdResolvers } from './household';
 import { inventoryResolvers } from './inventory-simple';
 import { aiResolvers } from './ai';
 import { timerResolvers } from './timer';
+import { houseSharingResolvers } from './houseSharing';
 
 export const resolvers: any = {
   DateTime: DateTimeResolver,
@@ -16,6 +17,7 @@ export const resolvers: any = {
     ...inventoryResolvers.Query,
     ...aiResolvers.Query,
     ...timerResolvers.Query,
+    ...houseSharingResolvers.Query,
   },
 
   Mutation: {
@@ -25,15 +27,24 @@ export const resolvers: any = {
     ...inventoryResolvers.Mutation,
     ...aiResolvers.Mutation,
     ...timerResolvers.Mutation,
+    ...houseSharingResolvers.Mutation,
   },
 
-  // Simple type resolvers for remaining models
+  // Type resolvers
   User: {
     // Prisma handles relationships automatically
   },
 
   House: {
-    // Prisma handles relationships automatically
+    ...houseSharingResolvers.House,
+  },
+
+  HouseShare: {
+    ...houseSharingResolvers.HouseShare,
+  },
+
+  HouseInvitation: {
+    ...houseSharingResolvers.HouseInvitation,
   },
 
   InventoryItem: {

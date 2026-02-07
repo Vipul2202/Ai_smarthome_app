@@ -1,33 +1,37 @@
 import { Context, requireAuth } from '../context';
+import { getUserHouses, checkHouseAccess } from '../../utils/houseAccess';
 
 export const householdResolvers = {
   Query: {
-    // Get user's houses
+    // Get user's houses (owned + shared)
     houses: async (_: any, __: any, context: Context) => {
       const user = requireAuth(context);
       
-      return context.prisma.house.findMany({
-        where: { userId: user.id },
-        orderBy: { createdDate: 'desc' },
-      });
+      return getUserHouses(context, user.id);
     },
 
-    // Get specific house
+    // Get specific house (with access control)
     house: async (_: any, { id }: any, context: Context) => {
       const user = requireAuth(context);
       
-      const house = await context.prisma.house.findFirst({
-        where: { 
-          id,
-          userId: user.id,
-        },
-      });
-
-      if (!house) {
+      const access = await checkHouseAccess(context, id, user.id);
+      
+      if (!access.hasAccess) {
         throw new Error('House not found or access denied');
       }
 
-      return house;
+      const house = await context.prisma.house.findUnique({
+        where: { id },
+        include: {
+          user: true,
+          inventory: true,
+        },
+      });
+
+      return {
+        ...house,
+        userRole: access.role,
+      };
     },
   },
 
@@ -48,16 +52,15 @@ export const householdResolvers = {
       return house;
     },
 
-    // Update house
+    // Update house (owner only)
     updateHouse: async (_: any, { id, input }: any, context: Context) => {
       const user = requireAuth(context);
       
       try {
-        // Optimized single query - update with access control
         return await context.prisma.house.update({
           where: { 
             id,
-            userId: user.id, // Access control in where clause
+            userId: user.id,
           },
           data: input,
         });
@@ -69,16 +72,15 @@ export const householdResolvers = {
       }
     },
 
-    // Delete house
+    // Delete house (owner only)
     deleteHouse: async (_: any, { id }: any, context: Context) => {
       const user = requireAuth(context);
       
       try {
-        // Optimized single query - delete with access control
         await context.prisma.house.delete({
           where: { 
             id,
-            userId: user.id, // Access control in where clause
+            userId: user.id,
           },
         });
         return true;
