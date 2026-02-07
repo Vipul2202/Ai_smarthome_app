@@ -164,7 +164,7 @@ export default function HousesScreen() {
           )}
 
           {/* Create New House Button */}
-          <TouchableOpacity onPress={handleCreateHouse} style={{ marginBottom: 24 }}>
+          <TouchableOpacity onPress={handleCreateHouse} style={{ marginBottom: 16 }}>
             <LinearGradient
               colors={['#10B981', '#059669']}
               style={{
@@ -187,6 +187,34 @@ export default function HousesScreen() {
                 color: 'white',
               }}>
                 Create New House
+              </Text>
+            </LinearGradient>
+          </TouchableOpacity>
+
+          {/* Join House Button */}
+          <TouchableOpacity onPress={() => router.push('/join-house')} style={{ marginBottom: 24 }}>
+            <LinearGradient
+              colors={['#3B82F6', '#2563EB']}
+              style={{
+                borderRadius: 16,
+                padding: 20,
+                flexDirection: 'row',
+                alignItems: 'center',
+                justifyContent: 'center',
+                shadowColor: '#3B82F6',
+                shadowOffset: { width: 0, height: 4 },
+                shadowOpacity: 0.3,
+                shadowRadius: 8,
+                elevation: 4,
+              }}
+            >
+              <Ionicons name="enter" size={24} color="white" style={{ marginRight: 12 }} />
+              <Text style={{
+                fontSize: 18,
+                fontWeight: '700',
+                color: 'white',
+              }}>
+                Join a Shared House
               </Text>
             </LinearGradient>
           </TouchableOpacity>
@@ -251,9 +279,8 @@ export default function HousesScreen() {
           ) : (
             <View style={{ gap: 16 }}>
               {houses.map((house) => (
-                <TouchableOpacity
+                <View
                   key={house.id}
-                  onPress={() => handleSelectHouse(house)}
                   style={{
                     backgroundColor: selectedHouse?.id === house.id 
                       ? (isDark ? '#1E3A8A' : '#EBF8FF')
@@ -271,60 +298,110 @@ export default function HousesScreen() {
                     elevation: 2,
                   }}
                 >
-                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                    <View style={{ flex: 1 }}>
-                      <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
-                        <Ionicons 
-                          name="home" 
-                          size={24} 
-                          color={selectedHouse?.id === house.id ? '#3B82F6' : colors.textSecondary}
-                          style={{ marginRight: 12 }} 
-                        />
+                  <TouchableOpacity
+                    onPress={() => handleSelectHouse(house)}
+                  >
+                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <View style={{ flex: 1 }}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
+                          <Ionicons 
+                            name="home" 
+                            size={24} 
+                            color={selectedHouse?.id === house.id ? '#3B82F6' : colors.textSecondary}
+                            style={{ marginRight: 12 }} 
+                          />
+                          <Text style={{
+                            fontSize: 18,
+                            fontWeight: 'bold',
+                            color: selectedHouse?.id === house.id ? '#3B82F6' : colors.text,
+                          }}>
+                            {house.name}
+                          </Text>
+                        </View>
+                        
+                        {house.description && (
+                          <Text style={{
+                            fontSize: 14,
+                            color: colors.textSecondary,
+                            marginBottom: 8,
+                            marginLeft: 36,
+                          }}>
+                            {house.description}
+                          </Text>
+                        )}
+                        
                         <Text style={{
-                          fontSize: 18,
-                          fontWeight: 'bold',
-                          color: selectedHouse?.id === house.id ? '#3B82F6' : colors.text,
-                        }}>
-                          {house.name}
-                        </Text>
-                      </View>
-                      
-                      {house.description && (
-                        <Text style={{
-                          fontSize: 14,
+                          fontSize: 12,
                           color: colors.textSecondary,
-                          marginBottom: 8,
                           marginLeft: 36,
                         }}>
-                          {house.description}
+                          Created {new Date(house.createdDate).toLocaleDateString()}
                         </Text>
-                      )}
-                      
-                      <Text style={{
-                        fontSize: 12,
-                        color: colors.textSecondary,
-                        marginLeft: 36,
-                      }}>
-                        Created {new Date(house.createdDate).toLocaleDateString()}
-                      </Text>
-                    </View>
+                      </View>
 
-                    {selectedHouse?.id === house.id ? (
-                      <View style={{
-                        backgroundColor: '#3B82F6',
-                        borderRadius: 20,
-                        width: 40,
-                        height: 40,
+                      {selectedHouse?.id === house.id ? (
+                        <View style={{
+                          backgroundColor: '#3B82F6',
+                          borderRadius: 20,
+                          width: 40,
+                          height: 40,
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                        }}>
+                          <Ionicons name="checkmark" size={24} color="white" />
+                        </View>
+                      ) : (
+                        <Ionicons name="chevron-forward" size={24} color={colors.textSecondary} />
+                      )}
+                    </View>
+                  </TouchableOpacity>
+
+                  {/* Share Button - Only show for owner (houses with WRITE access or no userRole means owned) */}
+                  {(house.userRole === 'WRITE' || !house.userRole) && (
+                    <TouchableOpacity
+                      onPress={() => router.push(`/houses/${house.id}/sharing`)}
+                      style={{
+                        marginTop: 12,
+                        paddingTop: 12,
+                        borderTopWidth: 1,
+                        borderTopColor: isDark ? '#374151' : '#E5E7EB',
+                        flexDirection: 'row',
                         alignItems: 'center',
                         justifyContent: 'center',
+                      }}
+                    >
+                      <Ionicons name="people" size={18} color="#3B82F6" style={{ marginRight: 8 }} />
+                      <Text style={{
+                        fontSize: 14,
+                        fontWeight: '600',
+                        color: '#3B82F6',
                       }}>
-                        <Ionicons name="checkmark" size={24} color="white" />
-                      </View>
-                    ) : (
-                      <Ionicons name="chevron-forward" size={24} color={colors.textSecondary} />
-                    )}
-                  </View>
-                </TouchableOpacity>
+                        Manage Sharing
+                      </Text>
+                    </TouchableOpacity>
+                  )}
+
+                  {/* Show access badge for shared houses */}
+                  {house.userRole === 'READ' && (
+                    <View style={{
+                      marginTop: 12,
+                      paddingTop: 12,
+                      borderTopWidth: 1,
+                      borderTopColor: isDark ? '#374151' : '#E5E7EB',
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    }}>
+                      <Ionicons name="eye-outline" size={16} color="#6b7280" style={{ marginRight: 6 }} />
+                      <Text style={{
+                        fontSize: 12,
+                        color: '#6b7280',
+                      }}>
+                        View Only Access
+                      </Text>
+                    </View>
+                  )}
+                </View>
               ))}
             </View>
           )}

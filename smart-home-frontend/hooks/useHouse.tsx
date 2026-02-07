@@ -10,6 +10,15 @@ const GET_HOUSES = gql`
       description
       createdDate
       updatedAt
+      userRole
+    }
+    sharedHouses {
+      id
+      name
+      description
+      createdDate
+      updatedAt
+      userRole
     }
   }
 `;
@@ -32,6 +41,7 @@ interface House {
   description?: string;
   createdDate?: string;
   updatedAt?: string;
+  userRole?: 'READ' | 'WRITE' | null;
 }
 
 interface HouseContextType {
@@ -89,7 +99,10 @@ export const HouseProvider = ({ children }: HouseProviderProps) => {
     refetchQueries: [{ query: GET_HOUSES }],
   });
 
-  const houses: House[] = housesData?.houses || [];
+  const houses: House[] = [
+    ...(housesData?.houses || []),
+    ...(housesData?.sharedHouses || [])
+  ];
 
   // Find current house
   const currentHouse = houses.find(h => h.id === currentHouseId) || null;
@@ -142,7 +155,7 @@ export const HouseProvider = ({ children }: HouseProviderProps) => {
 
   const createHouse = async (name: string, description?: string | null) => {
     try {
-      const { data: result } = await createHouseMutation({
+      const { data: result, errors } = await createHouseMutation({
         variables: {
           input: {
             name,
@@ -150,6 +163,11 @@ export const HouseProvider = ({ children }: HouseProviderProps) => {
           },
         },
       });
+
+      // Check for GraphQL errors
+      if (errors && errors.length > 0) {
+        return { success: false, error: errors[0] };
+      }
 
       if (result?.createHouse) {
         // Auto-select the new house

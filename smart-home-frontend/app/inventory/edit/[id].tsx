@@ -27,6 +27,7 @@ import { Badge } from '@/components/ui/Badge';
 import { useInventory } from '@/hooks/useInventory';
 import { CATEGORIZE_PRODUCT } from '@/lib/graphql/queries';
 import { InventoryItem } from '@/types';
+import { getErrorMessage } from '@/lib/errorHandler';
 
 const categories = [
   { id: 'fruits', label: 'Fruits', icon: 'leaf', color: '#10B981' },
@@ -170,10 +171,10 @@ export default function EditItemScreen() {
           { text: 'OK', onPress: () => router.back() }
         ]);
       } else {
-        Alert.alert('Error', result.error || 'Failed to update item');
+        Alert.alert('Error', getErrorMessage(result.error));
       }
     } catch (error) {
-      Alert.alert('Error', 'Failed to update item. Please try again.');
+      Alert.alert('Error', getErrorMessage(error));
     }
   };
 

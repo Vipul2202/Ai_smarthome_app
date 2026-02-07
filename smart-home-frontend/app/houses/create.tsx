@@ -18,6 +18,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useTheme } from '@/providers/ThemeProvider';
 import { useAuth } from '@/providers/AuthProvider';
 import { useHouse } from '@/hooks/useHouse';
+import { getErrorMessage } from '@/lib/errorHandler';
 
 export default function CreateHouseScreen() {
   const { colors, isDark } = useTheme();
@@ -63,11 +64,11 @@ export default function CreateHouseScreen() {
           ]
         );
       } else {
-        Alert.alert('Error', result.error || 'Failed to create house. Please try again.');
+        Alert.alert('Error', getErrorMessage(result.error));
       }
     } catch (error) {
       console.error('Failed to create house:', error);
-      Alert.alert('Error', 'Failed to create house. Please try again.');
+      Alert.alert('Error', getErrorMessage(error));
     } finally {
       setIsLoading(false);
     }

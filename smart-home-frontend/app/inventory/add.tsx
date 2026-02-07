@@ -26,6 +26,7 @@ import { Modal } from '@/components/ui/Modal';
 import { Badge } from '@/components/ui/Badge';
 import { useInventory } from '@/hooks/useInventory';
 import { CATEGORIZE_PRODUCT } from '@/lib/graphql/queries';
+import { getErrorMessage } from '@/lib/errorHandler';
 
 const categories = [
   { id: 'fruits', label: 'Fruits', icon: 'leaf', color: '#10B981' },
@@ -172,10 +173,10 @@ export default function AddItemScreen() {
           { text: 'OK', onPress: () => router.back() }
         ]);
       } else {
-        Alert.alert('Error', result.error || 'Failed to add item');
+        Alert.alert('Error', getErrorMessage(result.error));
       }
     } catch (error) {
-      Alert.alert('Error', 'Failed to add item. Please try again.');
+      Alert.alert('Error', getErrorMessage(error));
     }
   };
 
