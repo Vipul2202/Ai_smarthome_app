@@ -111,11 +111,44 @@ export default function SelectHouseScreen() {
         }
       } else if (data.errors) {
         console.error('GraphQL errors:', data.errors);
-        Alert.alert('Error', 'Failed to load houses');
+        
+        // Check if error is authentication related
+        const authError = data.errors.some((err: any) => 
+          err.message?.toLowerCase().includes('not authenticated') ||
+          err.message?.toLowerCase().includes('invalid token') ||
+          err.extensions?.code === 'UNAUTHENTICATED'
+        );
+        
+        if (authError) {
+          // Clear invalid token and redirect to login
+          await AsyncStorage.multiRemove(['authToken', 'user', 'selectedHouseId', 'selectedHouseName']);
+          Alert.alert(
+            'Session Expired',
+            'Your session has expired. Please login again.',
+            [{ text: 'OK', onPress: () => router.replace('/(auth)/login') }]
+          );
+        } else {
+          Alert.alert('Error', 'Failed to load houses');
+        }
       }
     } catch (error) {
       console.error('Error fetching houses:', error);
-      Alert.alert('Error', 'Failed to load houses');
+      
+      // Network error - likely invalid token or server issue
+      Alert.alert(
+        'Connection Error',
+        'Unable to connect to the server. Your session may have expired. Please login again.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Login',
+            onPress: async () => {
+              await AsyncStorage.multiRemove(['authToken', 'user', 'selectedHouseId', 'selectedHouseName']);
+              router.replace('/(auth)/login');
+            }
+          }
+        ]
+      );
     } finally {
       setLoading(false);
     }

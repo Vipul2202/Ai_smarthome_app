@@ -1,6 +1,7 @@
 // User Types
 export interface User {
   id: string;
+  userId?: string; // 6-digit User ID for sharing
   name: string;
   email: string;
   avatar?: string;

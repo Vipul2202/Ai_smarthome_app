@@ -8,6 +8,7 @@ export const typeDefs: DocumentNode = gql`
   # Auth Types
   type User {
     id: ID!
+    userId: String
     email: String!
     name: String
     avatar: String
@@ -246,6 +247,7 @@ export const typeDefs: DocumentNode = gql`
 
   input CreateHouseInvitationInput {
     houseId: ID!
+    invitedUserId: String!
     role: HouseRole!
     expiryDays: Int
   }
@@ -320,6 +322,7 @@ export const typeDefs: DocumentNode = gql`
   type Query {
     # Auth
     me: User
+    userByUserId(userId: String!): User
 
     # User Preferences
     userPreferences: UserPreferences

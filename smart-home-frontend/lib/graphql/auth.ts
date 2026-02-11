@@ -6,6 +6,7 @@ export const LOGIN_MUTATION = gql`
       token
       user {
         id
+        userId
         name
         email
         avatar
@@ -20,6 +21,7 @@ export const GOOGLE_LOGIN_MUTATION = gql`
       token
       user {
         id
+        userId
         name
         email
         avatar
@@ -34,6 +36,7 @@ export const REGISTER_MUTATION = gql`
       token
       user {
         id
+        userId
         name
         email
         avatar
@@ -46,6 +49,7 @@ export const GET_ME_QUERY = gql`
   query GetMe {
     me {
       id
+      userId
       name
       email
       avatar

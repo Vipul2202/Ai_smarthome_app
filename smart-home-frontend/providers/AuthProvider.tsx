@@ -68,6 +68,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
               token
               user {
                 id
+                userId
                 name
                 email
                 avatar
@@ -155,6 +156,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
               token
               user {
                 id
+                userId
                 name
                 email
                 avatar
@@ -216,6 +218,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
               token
               user {
                 id
+                userId
                 name
                 email
                 avatar

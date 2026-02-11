@@ -5,7 +5,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // Create HTTP link
 const httpLink = createHttpLink({
-  uri: process.env.EXPO_PUBLIC_GRAPHQL_URL || 'http://localhost:4000/graphql',
+  uri: process.env.EXPO_PUBLIC_GRAPHQL_URL || 'http://192.168.29.65:4000/graphql',
 });
 
 // Create error link to handle GraphQL errors

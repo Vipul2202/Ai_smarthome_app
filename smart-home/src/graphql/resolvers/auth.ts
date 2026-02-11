@@ -1,5 +1,6 @@
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
+import crypto from 'crypto';
 import { OAuth2Client } from 'google-auth-library';
 import { Context, requireAuth } from '../context';
 import { 
@@ -59,12 +60,16 @@ export const authResolvers: any = {
         // Hash password
         const hashedPassword = await bcrypt.hash(password, 12);
 
+        // Generate unique 6-digit userId
+        const userId = Math.floor(100000 + Math.random() * 900000).toString(); // 6-digit number
+
         // Create user
         const user = await context.prisma.user.create({
           data: {
             email: email.toLowerCase(),
             password: hashedPassword,
             name: name?.trim(),
+            userId,
             provider: 'EMAIL',
           },
         });
@@ -251,9 +256,11 @@ export const authResolvers: any = {
             name: name || email.split('@')[0],
             avatar: picture,
             password: '', // Empty password for Google users
+            userId: Math.floor(100000 + Math.random() * 900000).toString(), // 6-digit number
           },
           select: {
             id: true,
+            userId: true,
             email: true,
             name: true,
             avatar: true,

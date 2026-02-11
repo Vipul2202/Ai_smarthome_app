@@ -34,23 +34,16 @@ export default function Index() {
           console.log('- UserData exists:', !!userData);
           console.log('- TokenExpiry:', tokenExpiry);
           
-          if (token && tokenExpiry) {
-            const expiryDate = new Date(tokenExpiry);
-            const now = new Date();
-            const isExpired = now >= expiryDate;
-            
-            console.log('- Token expired:', isExpired);
-            
-            if (isExpired) {
-              console.log('🗑️ Clearing expired auth data');
-              await AsyncStorage.multiRemove([
-                'authToken', 
-                'userData', 
-                'tokenExpiry',
-                'selectedHouseId',
-                'selectedHouseName'
-              ]);
-            }
+          // If there's any stored auth data but no user in context, clear it
+          if (token || userData || tokenExpiry) {
+            console.log('🗑️ Clearing invalid/expired auth data');
+            await AsyncStorage.multiRemove([
+              'authToken', 
+              'userData', 
+              'tokenExpiry',
+              'selectedHouseId',
+              'selectedHouseName'
+            ]);
           }
           
           // No valid authentication - redirect to login
@@ -79,6 +72,14 @@ export default function Index() {
         
       } catch (error) {
         console.error('❌ Error during auth check:', error);
+        // Clear all auth data on error
+        await AsyncStorage.multiRemove([
+          'authToken', 
+          'userData', 
+          'tokenExpiry',
+          'selectedHouseId',
+          'selectedHouseName'
+        ]);
         setRedirectPath('/(auth)/login');
         setIsCheckingAuth(false);
       }

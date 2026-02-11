@@ -7,6 +7,7 @@ export const CREATE_HOUSE_INVITATION = gql`
         id
         houseId
         inviteCode
+        invitedUserId
         role
         expiryDate
         status
@@ -95,10 +96,23 @@ export const GET_HOUSE_SHARES = gql`
       createdAt
       user {
         id
+        userId
         name
         email
         avatar
       }
+    }
+  }
+`;
+
+export const GET_USER_BY_USER_ID = gql`
+  query GetUserByUserId($userId: String!) {
+    userByUserId(userId: $userId) {
+      id
+      userId
+      name
+      email
+      avatar
     }
   }
 `;

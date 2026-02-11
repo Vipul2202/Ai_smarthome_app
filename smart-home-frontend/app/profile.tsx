@@ -6,15 +6,21 @@ import {
   TouchableOpacity,
   useColorScheme,
   Alert,
+  ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { Platform, ToastAndroid } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
+import * as Clipboard from 'expo-clipboard';
 import { useAuth } from '@/providers/AuthProvider';
 import { Input } from '@/components/ui/Input';
 import { Button } from '@/components/ui/Button';
 import { ProfileAvatar } from '@/components/ui/Avatar';
+import { useQuery } from '@apollo/client';
+import { GET_ME_QUERY } from '@/lib/graphql/auth';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 export default function ProfileScreen() {
   const colorScheme = useColorScheme();
@@ -24,6 +30,43 @@ export default function ProfileScreen() {
   const [isEditing, setIsEditing] = useState(false);
   const [name, setName] = useState(user?.name || '');
   const [email, setEmail] = useState(user?.email || '');
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  // Fetch fresh user data from server
+  const { data, loading, refetch } = useQuery(GET_ME_QUERY, {
+    fetchPolicy: 'network-only', // Always fetch from network, not cache
+  });
+
+  // Update local user data when fresh data arrives
+  React.useEffect(() => {
+    if (data?.me && data.me.userId) {
+      // Update AsyncStorage with fresh user data
+      AsyncStorage.setItem('userData', JSON.stringify(data.me)).catch(console.error);
+      // Update context
+      updateUser(data.me);
+    }
+  }, [data]);
+
+  const handleRefresh = async () => {
+    setIsRefreshing(true);
+    try {
+      const result = await refetch();
+      if (result.data?.me) {
+        Alert.alert('✓ Refreshed', 'User data updated successfully');
+      }
+    } catch (error) {
+      Alert.alert('Error', 'Failed to refresh user data');
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
+const showCopyToast = () => {
+  if (Platform.OS === 'android') {
+    ToastAndroid.show('User ID copied', ToastAndroid.SHORT);
+  } else {
+    Alert.alert('Copied', 'User ID copied to clipboard');
+  }
+};
 
   const handleSave = async () => {
     if (!name.trim()) {
@@ -79,6 +122,18 @@ export default function ProfileScreen() {
         }}>
           Profile
         </Text>
+        
+        <TouchableOpacity 
+          onPress={handleRefresh}
+          disabled={isRefreshing}
+          style={{ marginRight: 12 }}
+        >
+          {isRefreshing ? (
+            <ActivityIndicator size="small" color="#3B82F6" />
+          ) : (
+            <Ionicons name="refresh" size={20} color="#3B82F6" />
+          )}
+        </TouchableOpacity>
         
         {!isEditing && (
           <TouchableOpacity onPress={() => setIsEditing(true)}>
@@ -157,6 +212,79 @@ export default function ProfileScreen() {
             </Text>
 
             <View style={{ gap: 16 }}>
+              {/* User ID Section - NEW! */}
+              <View>
+                <Text style={{
+                  fontSize: 14,
+                  fontWeight: '500',
+                  color: isDark ? '#9CA3AF' : '#6B7280',
+                  marginBottom: 8,
+                }}>
+                  Your User ID
+                </Text>
+                <View style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  backgroundColor: isDark ? '#374151' : '#F3F4F6',
+                  borderRadius: 12,
+                  padding: 16,
+                  borderWidth: 2,
+                  borderColor: '#3B82F6',
+                }}>
+                  <Ionicons name="finger-print" size={24} color="#3B82F6" style={{ marginRight: 12 }} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={{
+                      fontSize: 16,
+                      fontWeight: '600',
+                      color: isDark ? '#FFFFFF' : '#111827',
+                      fontFamily: 'monospace',
+                    }}>
+                      {loading ? 'Refreshing...' : (data?.me?.userId || user?.userId || 'Loading...')}
+                    </Text>
+                    <Text style={{
+                      fontSize: 12,
+                      color: isDark ? '#9CA3AF' : '#6B7280',
+                      marginTop: 4,
+                    }}>
+                      Share this ID to receive house access
+                    </Text>
+                  </View>
+                <TouchableOpacity
+  onPress={async () => {
+    const userIdToUse = data?.me?.userId || user?.userId;
+    if (userIdToUse) {
+      await Clipboard.setStringAsync(userIdToUse);
+      showCopyToast();
+    }
+  }}
+  style={{
+    backgroundColor: '#3B82F6',
+    borderRadius: 8,
+    padding: 10,
+    marginLeft: 8,
+  }}
+>
+  <Ionicons name="copy-outline" size={18} color="white" />
+</TouchableOpacity>
+
+                </View>
+                <View style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  marginTop: 8,
+                  paddingHorizontal: 4,
+                }}>
+                  <Ionicons name="information-circle" size={16} color="#3B82F6" style={{ marginRight: 6 }} />
+                  <Text style={{
+                    fontSize: 12,
+                    color: isDark ? '#9CA3AF' : '#6B7280',
+                    flex: 1,
+                  }}>
+                    This is your unique ID. Share it with others so they can give you access to their houses.
+                  </Text>
+                </View>
+              </View>
+
               <Input
                 label="Full Name"
                 value={name}

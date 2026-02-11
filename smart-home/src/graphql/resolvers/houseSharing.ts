@@ -45,6 +45,22 @@ export const houseSharingResolvers = {
       });
     },
 
+    userByUserId: async (_: any, { userId }: { userId: string }, context: Context) => {
+      requireAuth(context);
+
+      const user = await context.prisma.user.findUnique({
+        where: { userId },
+      });
+
+      if (!user) {
+        throw new GraphQLError('User not found', {
+          extensions: { code: 'NOT_FOUND' },
+        });
+      }
+
+      return user;
+    },
+
     houseInvitations: async (_: any, { houseId }: { houseId: string }, context: Context) => {
       const user = requireAuth(context);
 
@@ -89,18 +105,81 @@ export const houseSharingResolvers = {
   Mutation: {
     createHouseInvitation: async (
       _: any,
-      { input }: { input: { houseId: string; role: 'READ' | 'WRITE'; expiryDays?: number } },
+      { input }: { input: { houseId: string; invitedUserId: string; role: 'READ' | 'WRITE'; expiryDays?: number } },
       context: Context
     ) => {
       const user = requireAuth(context);
+
+      console.log('Creating house invitation with input:', input);
 
       const house = await context.prisma.house.findUnique({
         where: { id: input.houseId },
       });
 
-      if (!house || house.userId !== user.id) {
+      if (!house) {
+        console.error('House not found:', input.houseId);
+        throw new GraphQLError('House not found', {
+          extensions: { code: 'NOT_FOUND' },
+        });
+      }
+
+      if (house.userId !== user.id) {
+        console.error('User not authorized. House owner:', house.userId, 'Current user:', user.id);
         throw new GraphQLError('Not authorized to create invitation', {
           extensions: { code: 'FORBIDDEN' },
+        });
+      }
+
+      // Verify the invited user exists
+      console.log('Looking up user with userId:', input.invitedUserId);
+      const invitedUser = await context.prisma.user.findUnique({
+        where: { userId: input.invitedUserId },
+      });
+
+      if (!invitedUser) {
+        console.error('User not found with userId:', input.invitedUserId);
+        throw new GraphQLError('User not found with this User ID', {
+          extensions: { code: 'NOT_FOUND' },
+        });
+      }
+
+      console.log('Found invited user:', invitedUser.id, invitedUser.email);
+
+      // Check if user is trying to invite themselves
+      if (invitedUser.id === user.id) {
+        throw new GraphQLError('You cannot invite yourself to your own house', {
+          extensions: { code: 'BAD_REQUEST' },
+        });
+      }
+
+      // Check if user already has access
+      const existingShare = await context.prisma.houseShare.findUnique({
+        where: {
+          houseId_userId: {
+            houseId: input.houseId,
+            userId: invitedUser.id,
+          },
+        },
+      });
+
+      if (existingShare) {
+        throw new GraphQLError('This user already has access to your house', {
+          extensions: { code: 'BAD_REQUEST' },
+        });
+      }
+
+      // Check if there's already a pending invitation for this user
+      const existingInvitation = await context.prisma.houseInvitation.findFirst({
+        where: {
+          houseId: input.houseId,
+          invitedUserId: invitedUser.id,
+          status: 'PENDING',
+        },
+      });
+
+      if (existingInvitation) {
+        throw new GraphQLError('There is already a pending invitation for this user', {
+          extensions: { code: 'BAD_REQUEST' },
         });
       }
 
@@ -109,16 +188,21 @@ export const houseSharingResolvers = {
       const expiryDate = new Date();
       expiryDate.setDate(expiryDate.getDate() + expiryDays);
 
+      console.log('Creating invitation with code:', inviteCode);
+
       const invitation = await context.prisma.houseInvitation.create({
         data: {
           houseId: input.houseId,
           inviteCode,
+          invitedUserId: invitedUser.id,
           role: input.role,
           expiryDate,
           status: 'PENDING',
         },
         include: { house: true },
       });
+
+      console.log('Invitation created successfully:', invitation.id);
 
       const inviteLink = `${process.env.FRONTEND_URL || 'http://localhost:8081'}/accept-invite/${inviteCode}`;
 
@@ -168,6 +252,13 @@ export const houseSharingResolvers = {
         });
       }
 
+      // Verify this invitation is for the current user
+      if (invitation.invitedUserId !== user.id) {
+        throw new GraphQLError('This invitation is not for you. It was created for a specific user.', {
+          extensions: { code: 'FORBIDDEN' },
+        });
+      }
+
       const existingShare = await context.prisma.houseShare.findUnique({
         where: {
           houseId_userId: {
@@ -195,7 +286,6 @@ export const houseSharingResolvers = {
           where: { id: invitation.id },
           data: {
             status: 'ACCEPTED',
-            invitedUserId: user.id,
             usedDate: new Date(),
           },
         }),
@@ -423,6 +513,21 @@ export const houseSharingResolvers = {
       return context.prisma.house.findUnique({
         where: { id: parent.houseId },
       });
+    },
+    invitedUserId: async (parent: any, _: any, context: Context) => {
+      // Return the 6-digit User ID instead of database ID
+      if (!parent.invitedUserId) return null;
+      
+      try {
+        const user = await context.prisma.user.findUnique({
+          where: { id: parent.invitedUserId },
+        });
+        
+        return user?.userId || null;
+      } catch (error) {
+        console.error('Error fetching invitedUserId:', error);
+        return null;
+      }
     },
   },
 };

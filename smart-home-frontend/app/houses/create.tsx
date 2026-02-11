@@ -16,13 +16,11 @@ import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useTheme } from '@/providers/ThemeProvider';
-import { useAuth } from '@/providers/AuthProvider';
 import { useHouse } from '@/hooks/useHouse';
 import { getErrorMessage } from '@/lib/errorHandler';
 
 export default function CreateHouseScreen() {
   const { colors, isDark } = useTheme();
-  const { user } = useAuth();
   const { createHouse } = useHouse();
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
@@ -59,7 +57,7 @@ export default function CreateHouseScreen() {
           [
             {
               text: 'OK',
-              onPress: () => router.replace('/(tabs)'), // Redirect to dashboard
+              onPress: () => router.replace('/(tabs)'),
             },
           ]
         );
@@ -153,7 +151,7 @@ export default function CreateHouseScreen() {
                 />
                 <TextInput
                   style={[styles.textInput, styles.textArea, { color: colors.text }]}
-                  placeholder="Describe your house (rooms, features, etc.)"
+                  placeholder="Describe your house"
                   placeholderTextColor={colors.textSecondary}
                   value={description}
                   onChangeText={(text) => {
@@ -180,22 +178,10 @@ export default function CreateHouseScreen() {
               >
                 <Text style={[styles.exampleName, { color: colors.text }]}>🏡 Family Home</Text>
                 <Text style={[styles.exampleDesc, { color: colors.textSecondary }]}>
-                  Main family house with kitchen, living room, 3 bedrooms...
+                  Main family house with Inventory,  store useful ...
                 </Text>
               </TouchableOpacity>
-              
-              <TouchableOpacity
-                style={styles.exampleItem}
-                onPress={() => {
-                  setName('Vacation Cabin');
-                  setDescription('Cozy cabin in the mountains with fireplace, kitchen, and outdoor deck');
-                }}
-              >
-                <Text style={[styles.exampleName, { color: colors.text }]}>🏔️ Vacation Cabin</Text>
-                <Text style={[styles.exampleDesc, { color: colors.textSecondary }]}>
-                  Cozy cabin in the mountains with fireplace, kitchen...
-                </Text>
-              </TouchableOpacity>
+            
             </View>
 
             {/* Create Button */}

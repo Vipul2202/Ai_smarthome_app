@@ -14,27 +14,70 @@ import * as Clipboard from 'expo-clipboard';
 import { getErrorMessage, getErrorTitle } from '../lib/errorHandler';
 
 export const useHouseSharing = () => {
-  const [createInvitation] = useMutation(CREATE_HOUSE_INVITATION);
-  const [acceptInvitation] = useMutation(ACCEPT_HOUSE_INVITATION);
-  const [revokeInvitation] = useMutation(REVOKE_HOUSE_INVITATION);
-  const [removeShare] = useMutation(REMOVE_HOUSE_SHARE);
-  const [updateShareRole] = useMutation(UPDATE_HOUSE_SHARE_ROLE);
+  const [createInvitation] = useMutation(CREATE_HOUSE_INVITATION, {
+    errorPolicy: 'all',
+  });
+  const [acceptInvitation] = useMutation(ACCEPT_HOUSE_INVITATION, {
+    errorPolicy: 'all',
+  });
+  const [revokeInvitation] = useMutation(REVOKE_HOUSE_INVITATION, {
+    errorPolicy: 'all',
+  });
+  const [removeShare] = useMutation(REMOVE_HOUSE_SHARE, {
+    errorPolicy: 'all',
+  });
+  const [updateShareRole] = useMutation(UPDATE_HOUSE_SHARE_ROLE, {
+    errorPolicy: 'all',
+  });
 
   const createHouseInvitation = async (
     houseId: string,
+    invitedUserId: string,
     role: 'READ' | 'WRITE',
     expiryDays: number = 7
   ) => {
     try {
-      const { data } = await createInvitation({
+      console.log('Calling createInvitation mutation with:', {
+        houseId,
+        invitedUserId,
+        role,
+        expiryDays,
+      });
+
+      const { data, errors } = await createInvitation({
         variables: {
           input: {
             houseId,
+            invitedUserId,
             role,
             expiryDays,
           },
         },
       });
+
+      console.log('Mutation response:', { data, errors });
+
+      if (errors && errors.length > 0) {
+        console.error('GraphQL errors:', errors);
+        const errorMessage = errors[0].message;
+        
+        // Check for specific errors that should be handled by the calling component
+        if (errorMessage.includes('cannot invite yourself') || 
+            errorMessage.includes('your own house') ||
+            errorMessage.includes('already has access') ||
+            errorMessage.includes('pending invitation')) {
+          // Don't show alert here, let the calling component handle it
+          throw new Error(errorMessage);
+        }
+        
+        // For other errors, show alert
+        Alert.alert('Error', errorMessage);
+        throw new Error(errorMessage);
+      }
+
+      if (!data || !data.createHouseInvitation) {
+        throw new Error('No data returned from server');
+      }
 
       const inviteLink = data.createHouseInvitation.inviteLink;
       
@@ -59,6 +102,19 @@ export const useHouseSharing = () => {
 
       return data.createHouseInvitation;
     } catch (error: any) {
+      console.error('createHouseInvitation error:', error);
+      
+      // Check if this is a user-friendly error that should be handled by the calling component
+      const errorMessage = error?.message || '';
+      if (errorMessage.includes('cannot invite yourself') || 
+          errorMessage.includes('your own house') ||
+          errorMessage.includes('already has access') ||
+          errorMessage.includes('pending invitation')) {
+        // Just throw, don't show alert
+        throw error;
+      }
+      
+      // For other errors, show alert
       Alert.alert(getErrorTitle(error), getErrorMessage(error));
       throw error;
     }

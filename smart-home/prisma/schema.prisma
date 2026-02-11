@@ -10,6 +10,7 @@ datasource db {
 
 model User {
   id            String            @id @default(cuid())
+  userId        String?           @unique // Unique User ID for sharing (optional for migration)
   email         String            @unique
   name          String?
   password      String?
@@ -27,6 +28,7 @@ model User {
   sharedHouses  HouseShare[]
 
   @@index([email])
+  @@index([userId])
 }
 
 model HouseShare {
@@ -77,16 +79,16 @@ model House {
 }
 
 model HouseInvitation {
-  id            String   @id @default(cuid())
+  id            String           @id @default(cuid())
   houseId       String
-  inviteCode    String   @unique
-  invitedUserId String?
+  inviteCode    String           @unique
+  invitedUserId String?          // Optional for existing invitations
   role          HouseRole
   expiryDate    DateTime
   status        InvitationStatus @default(PENDING)
-  createdDate   DateTime @default(now())
+  createdDate   DateTime         @default(now())
   usedDate      DateTime?
-  house         House    @relation(fields: [houseId], references: [id], onDelete: Cascade)
+  house         House            @relation(fields: [houseId], references: [id], onDelete: Cascade)
 
   @@unique([houseId, invitedUserId])
   @@index([houseId])
